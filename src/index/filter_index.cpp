@@ -12,9 +12,15 @@ namespace vectordb {
 vectordb::FilterIndex::FilterIndex() = default;
 
 void FilterIndex::AddIntFieldFilter(const std::string &fieldname, int64_t value, uint64_t id) {
-  roaring_bitmap_t *bitmap = roaring_bitmap_create();
-  roaring_bitmap_add(bitmap, id);
-  int_field_filter_[fieldname][value] = bitmap;
+  auto& value_map = int_field_filter_[fieldname];
+  auto it = value_map.find(value);
+  if (it == value_map.end()) {
+    roaring_bitmap_t *bitmap = roaring_bitmap_create();
+    roaring_bitmap_add(bitmap, id);
+    value_map[value] = bitmap;
+  } else {
+    roaring_bitmap_add(it->second, id);
+  }
   global_logger->debug("Added int field filter: fieldname={}, value={}, id={}", fieldname, value, id);  // 添加打印信息
 }
 
@@ -61,20 +67,56 @@ void FilterIndex::GetIntFieldFilterBitmap(const std::string &fieldname, Operatio
   if (it != int_field_filter_.end()) {
     auto &value_map = it->second;
 
-    if (op == Operation::EQUAL) {
-      auto bitmap_it = value_map.find(value);
-      if (bitmap_it != value_map.end()) {
-        global_logger->debug("Retrieved EQUAL bitmap for fieldname={}, value={}", fieldname, value);
-        roaring_bitmap_overwrite(result_bitmap, bitmap_it->second);  // 更新 result_bitmap
-      }
-    } else if (op == Operation::NOT_EQUAL) {
-      for (const auto &entry : value_map) {
-        if (entry.first != value) {
-          roaring_bitmap_overwrite(result_bitmap, entry.second);  // 更新 result_bitmap
+    switch (op) {
+      case Operation::EQUAL: {
+        auto bitmap_it = value_map.find(value);
+        if (bitmap_it != value_map.end()) {
+          roaring_bitmap_or_inplace(result_bitmap, bitmap_it->second);
         }
+        break;
       }
-      global_logger->debug("Retrieved NOT_EQUAL bitmap for fieldname={}, value={}", fieldname, value);
+      case Operation::NOT_EQUAL: {
+        for (const auto &entry : value_map) {
+          if (entry.first != value) {
+            roaring_bitmap_or_inplace(result_bitmap, entry.second);
+          }
+        }
+        break;
+      }
+      case Operation::GREATER_THAN: {
+        for (const auto &entry : value_map) {
+          if (entry.first > value) {
+            roaring_bitmap_or_inplace(result_bitmap, entry.second);
+          }
+        }
+        break;
+      }
+      case Operation::LESS_THAN: {
+        for (const auto &entry : value_map) {
+          if (entry.first < value) {
+            roaring_bitmap_or_inplace(result_bitmap, entry.second);
+          }
+        }
+        break;
+      }
+      case Operation::GREATER_EQUAL: {
+        for (const auto &entry : value_map) {
+          if (entry.first >= value) {
+            roaring_bitmap_or_inplace(result_bitmap, entry.second);
+          }
+        }
+        break;
+      }
+      case Operation::LESS_EQUAL: {
+        for (const auto &entry : value_map) {
+          if (entry.first <= value) {
+            roaring_bitmap_or_inplace(result_bitmap, entry.second);
+          }
+        }
+        break;
+      }
     }
+    global_logger->debug("Retrieved int filter bitmap for fieldname={}, op={}, value={}", fieldname, static_cast<int>(op), value);
   }
 }
 
@@ -200,6 +242,71 @@ void FilterIndex::LoadIndex(const std::string &path) {  // 添加 key 参数
   // 从序列化的数据中反序列化 intFieldFilter
   int_field_filter_.clear();
   DeserializeIntFieldFilter(decompressed_data);
+}
+
+// ========== 字符串字段过滤 ==========
+
+void FilterIndex::AddStringFieldFilter(const std::string &fieldname, const std::string &value, uint64_t id) {
+  auto& value_map = string_field_filter_[fieldname];
+  auto it = value_map.find(value);
+  if (it == value_map.end()) {
+    roaring_bitmap_t *bitmap = roaring_bitmap_create();
+    roaring_bitmap_add(bitmap, id);
+    value_map[value] = bitmap;
+  } else {
+    roaring_bitmap_add(it->second, id);
+  }
+  global_logger->debug("Added string field filter: fieldname={}, value={}, id={}", fieldname, value, id);
+}
+
+void FilterIndex::UpdateStringFieldFilter(const std::string &fieldname, const std::string *old_value,
+                                          const std::string &new_value, uint64_t id) {
+  auto it = string_field_filter_.find(fieldname);
+  if (it != string_field_filter_.end()) {
+    auto &value_map = it->second;
+
+    // 从旧值 bitmap 中删除 ID
+    if (old_value != nullptr) {
+      auto old_bitmap_it = value_map.find(*old_value);
+      if (old_bitmap_it != value_map.end()) {
+        roaring_bitmap_remove(old_bitmap_it->second, id);
+      }
+    }
+
+    // 添加到新值 bitmap
+    auto new_bitmap_it = value_map.find(new_value);
+    if (new_bitmap_it == value_map.end()) {
+      roaring_bitmap_t *new_bitmap = roaring_bitmap_create();
+      value_map[new_value] = new_bitmap;
+      new_bitmap_it = value_map.find(new_value);
+    }
+    roaring_bitmap_add(new_bitmap_it->second, id);
+  } else {
+    AddStringFieldFilter(fieldname, new_value, id);
+  }
+}
+
+void FilterIndex::GetStringFieldFilterBitmap(const std::string &fieldname, Operation op,
+                                             const std::string &value, roaring_bitmap_t *result_bitmap) {
+  auto it = string_field_filter_.find(fieldname);
+  if (it != string_field_filter_.end()) {
+    auto &value_map = it->second;
+
+    if (op == Operation::EQUAL) {
+      auto bitmap_it = value_map.find(value);
+      if (bitmap_it != value_map.end()) {
+        roaring_bitmap_or_inplace(result_bitmap, bitmap_it->second);
+      }
+    } else if (op == Operation::NOT_EQUAL) {
+      for (const auto &entry : value_map) {
+        if (entry.first != value) {
+          roaring_bitmap_or_inplace(result_bitmap, entry.second);
+        }
+      }
+    }
+    // 字符串不支持范围查询
+    global_logger->debug("Retrieved string filter bitmap for fieldname={}, op={}, value={}", fieldname, static_cast<int>(op), value);
+  }
 }
 
 }  // namespace vectordb

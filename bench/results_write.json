@@ -1,0 +1,142 @@
+[
+  {
+    "name": "single_upsert_concurrent [FLAT] n=500 c=32 dim=128",
+    "total_requests": 500,
+    "success": 500,
+    "fail": 0,
+    "total_time_s": 0.568,
+    "qps": 880.2,
+    "throughput_ops_s": 880.2,
+    "latency_avg_ms": 34.399,
+    "latency_p50_ms": 33.374,
+    "latency_p95_ms": 44.026,
+    "latency_p99_ms": 45.894,
+    "latency_min_ms": 13.852,
+    "latency_max_ms": 46.033,
+    "extra": {}
+  },
+  {
+    "name": "batch_upsert_concurrent [FLAT] n=10000 batch=100 c=8 dim=128",
+    "total_requests": 100,
+    "success": 100,
+    "fail": 0,
+    "total_time_s": 3.344,
+    "qps": 29.9,
+    "throughput_ops_s": 29.9,
+    "latency_avg_ms": 255.74,
+    "latency_p50_ms": 258.966,
+    "latency_p95_ms": 260.522,
+    "latency_p99_ms": 316.515,
+    "latency_min_ms": 110.196,
+    "latency_max_ms": 316.515,
+    "extra": {
+      "batch_size": 100,
+      "total_batches": 100
+    }
+  },
+  {
+    "name": "batch_upsert_sequential [FLAT] n=10000 batch=100 dim=128",
+    "total_requests": 100,
+    "success": 100,
+    "fail": 0,
+    "total_time_s": 6.125,
+    "qps": 16.3,
+    "throughput_ops_s": 16.3,
+    "latency_avg_ms": 61.184,
+    "latency_p50_ms": 61.076,
+    "latency_p95_ms": 62.021,
+    "latency_p99_ms": 63.152,
+    "latency_min_ms": 60.562,
+    "latency_max_ms": 63.152,
+    "extra": {
+      "batch_size": 100,
+      "total_batches": 100
+    }
+  },
+  {
+    "name": "single_upsert_concurrent [HNSW] n=500 c=32 dim=128",
+    "total_requests": 500,
+    "success": 500,
+    "fail": 0,
+    "total_time_s": 11.883,
+    "qps": 42.1,
+    "throughput_ops_s": 42.1,
+    "latency_avg_ms": 737.227,
+    "latency_p50_ms": 757.757,
+    "latency_p95_ms": 820.739,
+    "latency_p99_ms": 848.934,
+    "latency_min_ms": 33.515,
+    "latency_max_ms": 851.633,
+    "extra": {}
+  },
+  {
+    "name": "batch_upsert_concurrent [HNSW] n=10000 batch=100 c=8 dim=128",
+    "total_requests": 100,
+    "success": 100,
+    "fail": 0,
+    "total_time_s": 129.829,
+    "qps": 0.8,
+    "throughput_ops_s": 0.8,
+    "latency_avg_ms": 9869.073,
+    "latency_p50_ms": 10028.571,
+    "latency_p95_ms": 10036.238,
+    "latency_p99_ms": 10135.085,
+    "latency_min_ms": 2427.045,
+    "latency_max_ms": 10135.085,
+    "extra": {
+      "batch_size": 100,
+      "total_batches": 100
+    }
+  },
+  {
+    "name": "batch_upsert_sequential [HNSW] n=10000 batch=100 dim=128",
+    "total_requests": 100,
+    "success": 100,
+    "fail": 0,
+    "total_time_s": 369.725,
+    "qps": 0.3,
+    "throughput_ops_s": 0.3,
+    "latency_avg_ms": 3697.183,
+    "latency_p50_ms": 2602.097,
+    "latency_p95_ms": 10028.849,
+    "latency_p99_ms": 10029.706,
+    "latency_min_ms": 2472.92,
+    "latency_max_ms": 10029.706,
+    "extra": {
+      "batch_size": 100,
+      "total_batches": 100
+    }
+  },
+  {
+    "name": "insert_concurrent [FLAT] n=1000 c=64 dim=128 (no Raft/WAL)",
+    "total_requests": 1000,
+    "success": 1000,
+    "fail": 0,
+    "total_time_s": 0.268,
+    "qps": 3729.0,
+    "throughput_ops_s": 3729.0,
+    "latency_avg_ms": 14.082,
+    "latency_p50_ms": 13.265,
+    "latency_p95_ms": 30.645,
+    "latency_p99_ms": 35.144,
+    "latency_min_ms": 3.06,
+    "latency_max_ms": 41.166,
+    "extra": {}
+  },
+  {
+    "name": "insert_concurrent [HNSW] n=1000 c=64 dim=128 (no Raft/WAL)",
+    "total_requests": 1000,
+    "success": 1000,
+    "fail": 0,
+    "total_time_s": 2.612,
+    "qps": 382.9,
+    "throughput_ops_s": 382.9,
+    "latency_avg_ms": 161.457,
+    "latency_p50_ms": 163.784,
+    "latency_p95_ms": 186.466,
+    "latency_p99_ms": 215.292,
+    "latency_min_ms": 51.956,
+    "latency_max_ms": 227.983,
+    "extra": {}
+  }
+]

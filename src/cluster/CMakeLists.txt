@@ -4,7 +4,8 @@ add_library(
         in_memory_log_store.cpp
         log_state_machine.cpp
         raft_logger.cpp
-        raft_stuff.cpp                                                                                 
+        raft_stuff.cpp
+        etcd_http_client.cpp
         )
 
 set(ALL_OBJECT_FILES

@@ -64,7 +64,6 @@ void AdminServiceImpl::AddFollower(::google::protobuf::RpcController *controller
     global_logger->error("Invalid JSON request");
     cntl->http_response().set_status_code(400);
     SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Invalid JSON request");
-    done->Run();
     return;
   }
 
@@ -72,8 +71,7 @@ void AdminServiceImpl::AddFollower(::google::protobuf::RpcController *controller
   if (!raft_stuff_->IsLeader()) {
     global_logger->error("Current node is not the leader");
     cntl->http_response().set_status_code(400);
-    SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Invalid JSON request");
-    done->Run();
+    SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Current node is not the leader");
     return;
   }
 
@@ -83,12 +81,11 @@ void AdminServiceImpl::AddFollower(::google::protobuf::RpcController *controller
 
   // 调用 RaftStuff 的 addSrv 方法将新的follower节点添加到集群中
   bool success = raft_stuff_->AddSrv(node_id, endpoint);
- 
+
   if (!success) {
     global_logger->error("raft_stuff  AddSrv  failed");
     cntl->http_response().set_status_code(400);
     SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "raft_stuff  AddSrv  failed");
-    done->Run();
     return;
   }
 

@@ -189,6 +189,18 @@ void Cfg::ParseCfgFile(const std::string &path,const  int &node_id) {
   } else {
     std::cout << "LOG fault" << std::endl;
   }
+
+  if (data.HasMember("DIM") && data["DIM"].IsInt()) {
+    dim_ = data["DIM"].GetInt();
+  } else {
+    std::cout << "DIM fault, using default 1" << std::endl;
+  }
+
+  if (data.HasMember("NUM_DATA") && data["NUM_DATA"].IsInt()) {
+    num_data_ = data["NUM_DATA"].GetInt();
+  } else {
+    std::cout << "NUM_DATA fault, using default 100" << std::endl;
+  }
 }
 
 }  // namespace vectordb

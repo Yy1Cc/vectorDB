@@ -17,6 +17,9 @@ public:
     // 向量插入函数
     void InsertScalar(uint64_t id, const rapidjson::Document& data); // 将参数类型更改为rapidjson::Document
 
+    // 批量插入函数
+    void BatchInsertScalar(const std::vector<uint64_t>& ids, const std::vector<rapidjson::Document>& datas);
+
     // 根据ID查询向量函数
     auto GetScalar(uint64_t id) -> rapidjson::Document; // 将返回类型更改为rapidjson::Document
 

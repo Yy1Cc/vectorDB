@@ -66,6 +66,19 @@ void ProxyServiceImpl::ForwardRequest(brpc::Controller *cntl, ::google::protobuf
   global_logger->debug("Received {} request", path);
   std::string partition_key_value;
   if (!ExtractPartitionKeyValue(cntl->request_attachment().to_string(), partition_key_value)) {
+    // 对于写请求，如果没有分区键（如批量插入），直接转发到主节点
+    if (write_paths_.find(path) != write_paths_.end()) {
+      int active_index = active_nodes_index_.load();
+      for (const auto &node : nodes_[active_index]) {
+        if (node.role_ == 0) {
+          global_logger->info("Write request without partition key, forwarding to master node: {}", node.url_);
+          ForwardToTargetNode(cntl, path, node);
+          return;
+        }
+      }
+      SetTextResponse("No master node available for forwarding", cntl, 503);
+      return;
+    }
     global_logger->debug("Partition key value not found, broadcasting request to all partitions");
     BroadcastRequestToAllPartitions(cntl, path);
     return;

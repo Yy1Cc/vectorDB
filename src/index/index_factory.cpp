@@ -1,6 +1,7 @@
 #include "index/index_factory.h"
 #include "index/hnswlib_index.h"
 #include "index/filter_index.h"
+#include "index/layered_index.h"
 namespace vectordb {
 
 void IndexFactory::Init(IndexType type, int dim,  int num_data,MetricType metric) {
@@ -16,6 +17,30 @@ void IndexFactory::Init(IndexType type, int dim,  int num_data,MetricType metric
         case IndexType::FILTER: // 初始化 FilterIndex 对象
             index_map_[type] = new FilterIndex();
             break;
+        case IndexType::SQ8: // 8bit 标量量化，4x 压缩
+            index_map_[type] = new vectordb::FaissIndex(new faiss::IndexIDMap(new faiss::IndexScalarQuantizer(dim, faiss::ScalarQuantizer::QT_8bit, faiss_metric)));
+            break;
+        case IndexType::SQ4: // 4bit 标量量化，8x 压缩
+            index_map_[type] = new vectordb::FaissIndex(new faiss::IndexIDMap(new faiss::IndexScalarQuantizer(dim, faiss::ScalarQuantizer::QT_4bit, faiss_metric)));
+            break;
+        case IndexType::IP_FLAT: // 内积(余弦)索引，ip2cos 预处理
+            index_map_[type] = new vectordb::FaissIndex(
+                new faiss::IndexIDMap(new faiss::IndexFlat(dim, faiss::METRIC_INNER_PRODUCT)), true);
+            break;
+        case IndexType::IP_SQ8: // 内积(余弦)+SQ8 量化
+            index_map_[type] = new vectordb::FaissIndex(
+                new faiss::IndexIDMap(new faiss::IndexScalarQuantizer(dim, faiss::ScalarQuantizer::QT_8bit, faiss::METRIC_INNER_PRODUCT)), true);
+            break;
+        case IndexType::LAYERED_FLAT: { // 分层存储：streaming part + FLAT
+            auto* base = new vectordb::FaissIndex(new faiss::IndexIDMap(new faiss::IndexFlat(dim, faiss_metric)));
+            index_map_[type] = new vectordb::LayeredIndex(base, dim, metric == MetricType::IP);
+            break;
+        }
+        case IndexType::LAYERED_SQ8: { // 分层存储：streaming part + SQ8
+            auto* base = new vectordb::FaissIndex(new faiss::IndexIDMap(new faiss::IndexScalarQuantizer(dim, faiss::ScalarQuantizer::QT_8bit, faiss_metric)));
+            index_map_[type] = new vectordb::LayeredIndex(base, dim, metric == MetricType::IP);
+            break;
+        }
         default:
             break;
     }
@@ -45,6 +70,11 @@ void IndexFactory::SaveIndex(const std::string& folder_path) { // 添加 ScalarS
             static_cast<HNSWLibIndex*>(index)->SaveIndex(file_path);
         } else if (index_type == IndexType::FILTER) { // 保存 FilterIndex 类型的索引
             static_cast<FilterIndex*>(index)->SaveIndex(file_path);
+        } else if (index_type == IndexType::SQ8 || index_type == IndexType::SQ4 ||
+                   index_type == IndexType::IP_FLAT || index_type == IndexType::IP_SQ8) { // 保存量化/IP索引（复用 FaissIndex）
+            static_cast<FaissIndex*>(index)->SaveIndex(file_path);
+        } else if (index_type == IndexType::LAYERED_FLAT || index_type == IndexType::LAYERED_SQ8) { // 保存分层索引
+            static_cast<LayeredIndex*>(index)->SaveIndex(file_path);
         }
     }
 }
@@ -64,6 +94,11 @@ void IndexFactory::LoadIndex(const std::string& folder_path) { // 添加 loadInd
             static_cast<HNSWLibIndex*>(index)->LoadIndex(file_path);
         } else if (index_type == IndexType::FILTER) { // 加载 FilterIndex 类型的索引
             static_cast<FilterIndex*>(index)->LoadIndex(file_path);
+        } else if (index_type == IndexType::SQ8 || index_type == IndexType::SQ4 ||
+                   index_type == IndexType::IP_FLAT || index_type == IndexType::IP_SQ8) { // 加载量化/IP索引（复用 FaissIndex）
+            static_cast<FaissIndex*>(index)->LoadIndex(file_path);
+        } else if (index_type == IndexType::LAYERED_FLAT || index_type == IndexType::LAYERED_SQ8) { // 加载分层索引
+            static_cast<LayeredIndex*>(index)->LoadIndex(file_path);
         }
     }
 }

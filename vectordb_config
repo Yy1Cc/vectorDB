@@ -6,9 +6,9 @@
                 "ENDPOINT":"127.0.0.1:8081",
                 "PORT":8081
             },
-            "ROCKS_DB_PATH" : "/home/zhouzj/vectordb1/storage",
-            "WAL_PATH" : "/home/zhouzj/vectordb1/wal",
-            "SNAP_PATH" : "/home/zhouzj/vectordb1/snap/",
+            "ROCKS_DB_PATH" : "/root/vectordb1/storage",
+            "WAL_PATH" : "/root/vectordb1/wal/wal.log",
+            "SNAP_PATH" : "/root/vectordb1/snap/",
             "ADDRESS" : "0.0.0.0",
             "PORT" : 7781
         },
@@ -18,9 +18,9 @@
                 "ENDPOINT":"127.0.0.1:8082",
                 "PORT":8082
             },
-            "ROCKS_DB_PATH" : "/home/zhouzj/vectordb2/storage",
-            "WAL_PATH" : "/home/zhouzj/vectordb2/wal",
-            "SNAP_PATH" : "/home/zhouzj/vectordb2/snap/",
+            "ROCKS_DB_PATH" : "/root/vectordb2/storage",
+            "WAL_PATH" : "/root/vectordb2/wal/wal.log",
+            "SNAP_PATH" : "/root/vectordb2/snap/",
             "ADDRESS" : "0.0.0.0",
             "PORT" : 7782
 
@@ -31,9 +31,9 @@
                 "ENDPOINT":"127.0.0.1:8083",
                 "PORT":8083
             },
-            "ROCKS_DB_PATH" : "/home/zhouzj/vectordb3/storage",
-            "WAL_PATH" : "/home/zhouzj/vectordb3/wal",
-            "SNAP_PATH" : "/home/zhouzj/vectordb3/snap/",
+            "ROCKS_DB_PATH" : "/root/vectordb3/storage",
+            "WAL_PATH" : "/root/vectordb3/wal/wal.log",
+            "SNAP_PATH" : "/root/vectordb3/snap/",
             "ADDRESS" : "0.0.0.0",
             "PORT" : 7783
 
@@ -44,9 +44,9 @@
                 "ENDPOINT":"127.0.0.1:8084",
                 "PORT":8084
             },
-            "ROCKS_DB_PATH" : "/home/zhouzj/vectordb4/storage",
-            "WAL_PATH" : "/home/zhouzj/vectordb4/wal",
-            "SNAP_PATH" : "/home/zhouzj/vectordb4/snap/",
+            "ROCKS_DB_PATH" : "/root/vectordb4/storage",
+            "WAL_PATH" : "/root/vectordb4/wal/wal.log",
+            "SNAP_PATH" : "/root/vectordb4/snap/",
             "ADDRESS" : "0.0.0.0",
             "PORT" : 7784
 
@@ -56,8 +56,10 @@
         "LOG_NAME" : "my_log",
         "LOG_LEVEL" : 1
     },
-    "TEST_ROCKS_DB_PATH" : "/home/zhouzj/test_vectordb/storage",
-    "TEST_WAL_PATH" : "/home/zhouzj/test_vectordb/wal",
-    "TEST_SNAP_PATH" : "/home/zhouzj/test_vectordb/snap/"
+    "TEST_ROCKS_DB_PATH" : "/root/test_vectordb/storage",
+    "TEST_WAL_PATH" : "/root/test_vectordb/wal/wal.log",
+    "TEST_SNAP_PATH" : "/root/test_vectordb/snap/",
+    "DIM": 128,
+    "NUM_DATA": 1000000
 
 }

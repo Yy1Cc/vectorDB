@@ -12,6 +12,9 @@ public:
     // 插入向量
     void InsertVectors(const std::vector<float>& data, int64_t label);
 
+    // 批量插入向量
+    void BatchInsertVectors(const std::vector<float>& data, int n, const std::vector<int64_t>& labels);
+
     // 查询向量
     auto SearchVectors(const std::vector<float>& query, int k, const roaring_bitmap_t* bitmap = nullptr,int ef_search = 50) -> std::pair<std::vector<int64_t>, std::vector<float>>;
 

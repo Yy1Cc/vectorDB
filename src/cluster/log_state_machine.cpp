@@ -17,18 +17,43 @@ auto LogStateMachine::commit(const nuraft::ulong log_idx, nuraft::buffer &data) 
 
   rapidjson::Document json_request;
   json_request.Parse(content.c_str());
-  uint64_t label = json_request[REQUEST_ID].GetUint64();
 
   // Update last committed index number.
   last_committed_idx_ = log_idx;
 
-  // 获取请求参数中的索引类型
-  IndexFactory::IndexType index_type = vector_database_->GetIndexTypeFromRequest(json_request);
-
-  // vector_database_->Upsert(label, json_request, index_type);
-  vector_database_->Upsert(label, json_request, index_type);
-  // 在 upsert 调用之后调用 VectorDatabase::writeWALLog
-//   vector_database_->WriteWalLog("upsert", json_request);
+  // 检查是否为批量插入操作
+  if (json_request.HasMember(REQUEST_OPERATION_TYPE) &&
+      json_request[REQUEST_OPERATION_TYPE].IsString() &&
+      std::string(json_request[REQUEST_OPERATION_TYPE].GetString()) == OPERATION_TYPE_BATCH_UPSERT) {
+    // 批量插入操作
+    IndexFactory::IndexType index_type = vector_database_->GetIndexTypeFromRequest(json_request);
+    if (json_request.HasMember(REQUEST_ITEMS) && json_request[REQUEST_ITEMS].IsArray()) {
+      const auto& items = json_request[REQUEST_ITEMS].GetArray();
+      std::vector<uint64_t> ids;
+      std::vector<rapidjson::Document> datas;
+      ids.reserve(items.Size());
+      datas.reserve(items.Size());
+      for (rapidjson::SizeType i = 0; i < items.Size(); ++i) {
+        const auto& item = items[i];
+        if (!item.IsObject() || !item.HasMember(REQUEST_ID) || !item.HasMember(REQUEST_VECTORS)) {
+          continue;
+        }
+        uint64_t id = item[REQUEST_ID].GetUint64();
+        rapidjson::Document doc;
+        doc.CopyFrom(item, doc.GetAllocator());
+        ids.push_back(id);
+        datas.push_back(std::move(doc));
+      }
+      if (!ids.empty()) {
+        vector_database_->BatchUpsert(ids, datas, index_type);
+      }
+    }
+  } else {
+    // 单条插入操作
+    uint64_t label = json_request[REQUEST_ID].GetUint64();
+    IndexFactory::IndexType index_type = vector_database_->GetIndexTypeFromRequest(json_request);
+    vector_database_->Upsert(label, json_request, index_type);
+  }
 
   // Return Raft log number as a return result.
   nuraft::ptr<nuraft::buffer> ret = nuraft::buffer::alloc(sizeof(log_idx));

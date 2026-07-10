@@ -32,6 +32,20 @@ void ScalarStorage::InsertScalar(uint64_t id, const rapidjson::Document& data) {
     }
 }
 
+void ScalarStorage::BatchInsertScalar(const std::vector<uint64_t>& ids, const std::vector<rapidjson::Document>& datas) {
+    rocksdb::WriteBatch batch;
+    for (size_t i = 0; i < ids.size(); ++i) {
+        rapidjson::StringBuffer buffer;
+        rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+        datas[i].Accept(writer);
+        batch.Put(std::to_string(ids[i]), buffer.GetString());
+    }
+    rocksdb::Status status = db_->Write(rocksdb::WriteOptions(), &batch);
+    if (!status.ok()) {
+        global_logger->error("Failed to batch insert scalar: {}", status.ToString());
+    }
+}
+
 auto ScalarStorage::GetScalar(uint64_t id) -> rapidjson::Document { // 将返回类型更改为rapidjson::Document
     std::string value;
     rocksdb::Status status = db_->Get(rocksdb::ReadOptions(), std::to_string(id), &value);

@@ -5,6 +5,9 @@ add_library(
         hnswlib_index.cpp
         index_factory.cpp
         filter_index.cpp
+        inner_product_space.cpp
+        layered_index.cpp
+        fulltext_index.cpp
         )
 
 set(ALL_OBJECT_FILES

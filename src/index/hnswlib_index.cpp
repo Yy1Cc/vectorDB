@@ -20,6 +20,19 @@ void HNSWLibIndex::InsertVectors(const std::vector<float>& data, int64_t label) 
     index_->addPoint(data.data(), label);
 }
 
+void HNSWLibIndex::BatchInsertVectors(const std::vector<float>& data, int n, const std::vector<int64_t>& labels) {
+    assert(index_ != nullptr);
+    int dim = space_->get_data_size() / sizeof(float);
+    // 如果超出当前容量，扩容
+    if (index_->getCurrentElementCount() + n > max_elements_) {
+        max_elements_ = index_->getCurrentElementCount() + n;
+        index_->resizeIndex(max_elements_);
+    }
+    for (int i = 0; i < n; ++i) {
+        index_->addPoint(data.data() + i * dim, labels[i]);
+    }
+}
+
 // 找到最多K个 可能不满K个 不满的都是label distance 为-1
 auto HNSWLibIndex::SearchVectors(const std::vector<float>& query, int k,const roaring_bitmap_t* bitmap , int ef_search) -> std::pair<std::vector<int64_t>, std::vector<float>> { // 修改返回类型
     assert(index_ != nullptr);

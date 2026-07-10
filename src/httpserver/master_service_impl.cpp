@@ -56,7 +56,7 @@ void MasterServiceImpl::GetNodeInfo(::google::protobuf::RpcController *controlle
 
   try {
     std::string etcd_key = "/instances/" + std::to_string(instance_id) + "/nodes/" + std::to_string(node_id);
-    etcd::Response etcd_response = etcd_client_.get(etcd_key).get();
+    EtcdResponse etcd_response = etcd_client_.get(etcd_key);
     if (!etcd_response.is_ok()) {
       global_logger->error("etcd response fail");
       SetResponse(cntl, 1, "Error accessing etcd: " + etcd_response.error_message());
@@ -114,7 +114,7 @@ void MasterServiceImpl::AddNode(::google::protobuf::RpcController *controller, c
     rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
     json_request.Accept(writer);
 
-    etcd_client_.set(etcd_key, buffer.GetString()).get();
+    etcd_client_.set(etcd_key, buffer.GetString());
     SetResponse(cntl, 0, "Node added successfully");
   } catch (const std::exception &e) {
     global_logger->error("AddNode exception");
@@ -149,7 +149,7 @@ void MasterServiceImpl::RemoveNode(::google::protobuf::RpcController *controller
   std::string etcd_key = "/instances/" + std::to_string(instance_id) + "/nodes/" + std::to_string(node_id);
 
   try {
-    etcd::Response etcd_response = etcd_client_.rm(etcd_key).get();
+    EtcdResponse etcd_response = etcd_client_.rm(etcd_key);
     if (!etcd_response.is_ok()) {
       global_logger->error("RemoveNode etcd error");
       SetResponse(cntl, 1, "Error removing node from etcd: " + etcd_response.error_message());
@@ -188,7 +188,7 @@ void MasterServiceImpl::GetInstance(::google::protobuf::RpcController *controlle
     std::string etcd_key_prefix = "/instances/" + std::to_string(instance_id) + "/nodes/";
     global_logger->debug("etcd key prefix: {}", etcd_key_prefix);
 
-    etcd::Response etcd_response = etcd_client_.ls(etcd_key_prefix).get();
+    EtcdResponse etcd_response = etcd_client_.ls(etcd_key_prefix);
     global_logger->debug("etcd ls response received");
 
     if (!etcd_response.is_ok()) {
@@ -241,7 +241,7 @@ void MasterServiceImpl::UpdateNodeStates() {
   try {
     std::string nodes_key_prefix = "/instances/";
     global_logger->info("Fetching nodes list from etcd");
-    etcd::Response etcd_response = etcd_client_.ls(nodes_key_prefix).get();
+    EtcdResponse etcd_response = etcd_client_.ls(nodes_key_prefix);
 
     for (size_t i = 0; i < etcd_response.keys().size(); ++i) {
       const std::string &node_key = etcd_response.keys()[i];
@@ -298,7 +298,7 @@ void MasterServiceImpl::UpdateNodeStates() {
         rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
         node_doc.Accept(writer);
 
-        etcd_client_.set(node_key, buffer.GetString()).get();
+        etcd_client_.set(node_key, buffer.GetString());
         global_logger->info("Updated node {} with new status and role", node_key);
       }
     }
@@ -401,7 +401,7 @@ void MasterServiceImpl::UpdatePartitionConfig(::google::protobuf::RpcController 
 auto MasterServiceImpl::DoGetPartitionConfig(uint64_t instanceId) -> PartitionConfig {
     PartitionConfig config;
     std::string etcd_key = "/instancesConfig/" + std::to_string(instanceId) + "/partitionConfig";
-    etcd::Response etcd_response = etcd_client_.get(etcd_key).get();
+    EtcdResponse etcd_response = etcd_client_.get(etcd_key);
     rapidjson::Document doc;
     doc.Parse(etcd_response.value().as_string().c_str());
 
@@ -450,7 +450,7 @@ void MasterServiceImpl::DoUpdatePartitionConfig(uint64_t instanceId, const std::
     doc.Accept(writer);
 
     std::string etcd_key = "/instancesConfig/" + std::to_string(instanceId) + "/partitionConfig";
-    etcd_client_.set(etcd_key, buffer.GetString()).get();
+    etcd_client_.set(etcd_key, buffer.GetString());
     global_logger->info("Updated partition config for instance {}", instanceId);
 }
 

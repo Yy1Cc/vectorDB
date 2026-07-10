@@ -15,20 +15,33 @@ class FilterIndex {
 public:
     enum class Operation {
         EQUAL,
-        NOT_EQUAL
+        NOT_EQUAL,
+        GREATER_THAN,    // >
+        LESS_THAN,       // <
+        GREATER_EQUAL,   // >=
+        LESS_EQUAL       // <=
     };
 
     FilterIndex();
+
+    // int 字段
     void AddIntFieldFilter(const std::string& fieldname, int64_t value, uint64_t id);
-    void UpdateIntFieldFilter(const std::string& fieldname, int64_t* old_value, int64_t new_value, uint64_t id); // 将 old_value 参数更改为指针类型
-    void GetIntFieldFilterBitmap(const std::string& fieldname, Operation op, int64_t value, roaring_bitmap_t* result_bitmap); // 添加 result_bitmap 参数
-    auto SerializeIntFieldFilter() -> std::string; // 添加 serializeIntFieldFilter 方法声明
-    void DeserializeIntFieldFilter(const std::string& serialized_data); // 添加 deserializeIntFieldFilter 方法声明
-    void SaveIndex(const std::string& path); // 添加 path 参数
-    void LoadIndex(const std::string& path); // 添加 path 参数
+    void UpdateIntFieldFilter(const std::string& fieldname, int64_t* old_value, int64_t new_value, uint64_t id);
+    void GetIntFieldFilterBitmap(const std::string& fieldname, Operation op, int64_t value, roaring_bitmap_t* result_bitmap);
+
+    // 字符串字段
+    void AddStringFieldFilter(const std::string& fieldname, const std::string& value, uint64_t id);
+    void UpdateStringFieldFilter(const std::string& fieldname, const std::string* old_value, const std::string& new_value, uint64_t id);
+    void GetStringFieldFilterBitmap(const std::string& fieldname, Operation op, const std::string& value, roaring_bitmap_t* result_bitmap);
+
+    auto SerializeIntFieldFilter() -> std::string;
+    void DeserializeIntFieldFilter(const std::string& serialized_data);
+    void SaveIndex(const std::string& path);
+    void LoadIndex(const std::string& path);
 
 private:
     std::map<std::string, std::map<int64_t, roaring_bitmap_t*>> int_field_filter_;
+    std::map<std::string, std::map<std::string, roaring_bitmap_t*>> string_field_filter_;
 };
 
 }  // namespace vectordb

@@ -30,7 +30,6 @@ set(LINK_LIBS ${LINK_LIBS}
         -lpthread
         -lstdc++fs
         -lzstd
-        -lcpprest
         -lgfortran
         -ldl
     )

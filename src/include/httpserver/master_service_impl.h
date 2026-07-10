@@ -2,10 +2,10 @@
 #include <curl/curl.h>
 #include <rapidjson/document.h>
 #include <cstdint>
-#include <etcd/Client.hpp>
 #include <string>
 #include <utility>
 #include "brpc/stream.h"
+#include "cluster/etcd_http_client.h"
 #include "cluster/raft_stuff.h"
 #include "database/vector_database.h"
 #include "gmock/gmock.h"
@@ -67,7 +67,7 @@ class MasterServiceImpl : public nvm::MasterService, public BaseServiceImpl {
                                const std::list<Partition> &partitions);
 
  private:
-  etcd::Client etcd_client_;
+  EtcdHttpClient etcd_client_;
   std::map<std::string, int> node_error_counts_;  // 错误计数器
 };
 }  // namespace vectordb

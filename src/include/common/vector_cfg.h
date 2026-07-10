@@ -49,6 +49,8 @@ class Cfg : public Singleton<Cfg> {
   auto RaftNodeId() const noexcept -> int { return raft_cfg_.node_id_; }
   auto RaftPort() const noexcept -> int { return raft_cfg_.port_; }
   auto RaftEndpoint() const noexcept -> const std::string & { return raft_cfg_.endpoint_; }
+  auto Dim() const noexcept -> int { return dim_; }
+  auto NumData() const noexcept -> int { return num_data_; }
 
  private:
   Cfg() { ParseCfgFile(cfg_path,node_id); }
@@ -67,6 +69,8 @@ class Cfg : public Singleton<Cfg> {
   std::string test_snap_path_;
   std::string address_;
   int port_;
+  int dim_{1};
+  int num_data_{100};
 
   static std::string cfg_path;
   static int node_id;

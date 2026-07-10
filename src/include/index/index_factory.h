@@ -3,6 +3,7 @@
 #include "faiss_index.h"
 #include "faiss/IndexFlat.h"
 #include "faiss/IndexIDMap.h"
+#include "faiss/IndexScalarQuantizer.h"
 #include "common/vector_utils.h"
 #include <map>
 
@@ -14,7 +15,13 @@ public:
         FLAT,
         HNSW,
         FILTER, // 添加 FILTER 枚举值
-        UNKNOWN = -1 
+        SQ8,    // 8bit 标量量化，4x 压缩
+        SQ4,    // 4bit 标量量化， 8x 压缩
+        IP_FLAT, // 内积(余弦)索引，ip2cos 预处理
+        IP_SQ8,  // 内积(余弦)+SQ8 量化
+        LAYERED_FLAT, // 分层存储（streaming part + FLAT）
+        LAYERED_SQ8,  // 分层存储（streaming part + SQ8）
+        UNKNOWN = -1
     };
 
     enum class MetricType {

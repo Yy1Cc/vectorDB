@@ -12,10 +12,11 @@ void VdbServerInit(int node_id) {
   InitGlobalLogger(Cfg::Instance().GlogName());
   SetLogLevel(Cfg::Instance().GlogLevel());
   auto &indexfactory = IndexFactory::Instance();
-  int dim = 1;  // 向量维度
-  indexfactory.Init(IndexFactory::IndexType::FLAT, dim, 100);
-  indexfactory.Init(IndexFactory::IndexType::HNSW, dim, 100);
-  indexfactory.Init(IndexFactory::IndexType::FILTER, dim, 100);
+  int dim = Cfg::Instance().Dim();
+  int num_data = Cfg::Instance().NumData();
+  indexfactory.Init(IndexFactory::IndexType::FLAT, dim, num_data);
+  indexfactory.Init(IndexFactory::IndexType::HNSW, dim, num_data);
+  indexfactory.Init(IndexFactory::IndexType::FILTER, dim, num_data);
 }
 
 

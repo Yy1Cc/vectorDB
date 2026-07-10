@@ -197,10 +197,19 @@ void UserServiceImpl::upsert(::google::protobuf::RpcController *controller, cons
 
   // 检查请求的合法性
   if (!IsRequestValid(json_request, BaseServiceImpl::CheckType::UPSERT)) {
-    global_logger->error("Missing vectors or id parameter in the request");
-    cntl->http_response().set_status_code(400);
-    SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Missing vectors or id parameter in the request");
-    return;
+    // 检查是否为批量插入请求
+    if (json_request.HasMember(REQUEST_OPERATION_TYPE) &&
+        json_request[REQUEST_OPERATION_TYPE].IsString() &&
+        std::string(json_request[REQUEST_OPERATION_TYPE].GetString()) == OPERATION_TYPE_BATCH_UPSERT &&
+        json_request.HasMember(REQUEST_ITEMS) && json_request[REQUEST_ITEMS].IsArray()) {
+      // 批量插入请求，跳过单条校验
+      global_logger->info("Batch upsert request with {} items", json_request[REQUEST_ITEMS].Size());
+    } else {
+      global_logger->error("Missing vectors or id parameter in the request");
+      cntl->http_response().set_status_code(400);
+      SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Missing vectors or id parameter in the request");
+      return;
+    }
   }
 
   // uint64_t label = json_request[REQUEST_ID].GetUint64();

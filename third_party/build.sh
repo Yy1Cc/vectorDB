@@ -80,7 +80,7 @@ function check_md5() {
 }
 
 function build_openblas() {
-    local URL="https://gh.llkk.cc/https://github.com/OpenMathLib/OpenBLAS/archive/refs/tags/v0.3.28.tar.gz"
+    local URL="https://github.com/OpenMathLib/OpenBLAS/archive/refs/tags/v0.3.28.tar.gz"
     local FILE=OpenBLAS-0.3.2.tar.gz
     local DIR=OpenBLAS-0.3.28
     local MD5SUM="0f54185b6ef804173c01b9a40520a0e8"
@@ -103,7 +103,7 @@ function build_openblas() {
 function build_faiss() {
     build_openblas
 
-    local URL="https://gh.llkk.cc/https://github.com/facebookresearch/faiss/archive/refs/tags/v1.9.0.tar.gz"
+    local URL="https://github.com/facebookresearch/faiss/archive/refs/tags/v1.9.0.tar.gz"
     local FILE=faiss-1.9.0.tar.gz
     local DIR=faiss-1.9.0
     local MD5SUM="db62643ba325b296eeb84dc73897fe81"
@@ -129,7 +129,7 @@ function build_faiss() {
 }
 
 function build_hnswlib() {
-    local URL="https://gh.llkk.cc/https://github.com/nmslib/hnswlib/archive/refs/tags/v0.8.0.tar.gz"
+    local URL="https://github.com/nmslib/hnswlib/archive/refs/tags/v0.8.0.tar.gz"
     local FILE=hnswlib-0.8.0.tar.gz
     local DIR=hnswlib-0.8.0
     local MD5SUM="126c5c6b7d8e71c6e7c70dc4d5f3933e"
@@ -144,7 +144,7 @@ function build_hnswlib() {
 }
 
 function build_rapidjson() {
-    local REPO_URL="https://gh.llkk.cc/https://github.com/Tencent/rapidjson.git"
+    local REPO_URL="https://github.com/Tencent/rapidjson.git"
     local DIR=rapidjson
 
     # 检查是否已经 clone 仓库，如果没有则执行 clone
@@ -167,7 +167,7 @@ function build_rapidjson() {
 }
 
 function build_gtest() {
-    local URL="https://gh.llkk.cc/https://github.com/google/googletest/releases/download/v1.15.2/googletest-1.15.2.tar.gz"
+    local URL="https://github.com/google/googletest/releases/download/v1.15.2/googletest-1.15.2.tar.gz"
     local FILE=googletest-1.15.2.tar.gz
     local DIR=googletest-1.15.2
     local MD5SUM="7e11f6cfcf6498324ac82d567dcb891e"
@@ -182,7 +182,7 @@ function build_gtest() {
 }
 
 function build_backward() {
-    local URL="https://gh.llkk.cc/https://github.com/bombela/backward-cpp/archive/refs/tags/v1.6.tar.gz"
+    local URL="https://github.com/bombela/backward-cpp/archive/refs/tags/v1.6.tar.gz"
     local FILE=v1.6.tar.gz
     local DIR=backward-cpp-1.6
     local MD5SUM="0facf6e0fb35ed0f3cd069424a1dc79a"
@@ -197,7 +197,7 @@ function build_backward() {
 }
 
 function build_httplib() {
-    local URL="https://gh.llkk.cc/https://github.com/yhirose/cpp-httplib/archive/refs/tags/v0.18.1.tar.gz"
+    local URL="https://github.com/yhirose/cpp-httplib/archive/refs/tags/v0.18.1.tar.gz"
     local FILE=cpp-httplib-0.18.1.tar.gz
     local DIR=cpp-httplib-0.18.1
     local MD5SUM="a2427747a7c352fee8a1cc9e4db87168"
@@ -212,7 +212,7 @@ function build_httplib() {
 }
 
 function build_spdlog() {
-    local URL="https://gh.llkk.cc/https://github.com/gabime/spdlog/archive/refs/tags/v1.14.1.tar.gz"
+    local URL="https://github.com/gabime/spdlog/archive/refs/tags/v1.14.1.tar.gz"
     local FILE=spdlog-1.14.1.tar.gz
     local DIR=spdlog-1.14.1
     local MD5SUM="f2c3f15c20e67b261836ff7bfda302cf"
@@ -227,7 +227,7 @@ function build_spdlog() {
 }
 
 function build_gflags() {
-    local URL="https://gh.llkk.cc/https://github.com/gflags/gflags/archive/refs/tags/v2.2.1.tar.gz"
+    local URL="https://github.com/gflags/gflags/archive/refs/tags/v2.2.1.tar.gz"
     local FILE=gflags-2.2.1.tar.gz
     local DIR=gflags-2.2.1
     local MD5SUM="b98e772b4490c84fc5a87681973f75d1"
@@ -243,7 +243,7 @@ function build_gflags() {
 }
 
 function build_glog() {
-    local URL="https://gh.llkk.cc/https://github.com/google/glog/archive/refs/tags/v0.6.0.tar.gz"
+    local URL="https://github.com/google/glog/archive/refs/tags/v0.6.0.tar.gz"
     local FILE=glog-0.6.0.tar.gz
     local DIR=glog-0.6.0
     local MD5SUM="c98a6068bc9b8ad9cebaca625ca73aa2"
@@ -263,7 +263,7 @@ function build_glog() {
 }
 
 function build_zlib() {
-    local URL="https://gh.llkk.cc/https://github.com/madler/zlib/archive/refs/tags/v1.2.13.tar.gz"
+    local URL="https://github.com/madler/zlib/archive/refs/tags/v1.2.13.tar.gz"
     local FILE=zlib-1.2.13.tar.gz
     local DIR=zlib-1.2.13
     local MD5SUM="9c7d356c5acaa563555490676ca14d23"
@@ -285,7 +285,7 @@ function build_zlib() {
 }
 
 function build_protobuf() {
-    local URL="https://gh.llkk.cc/https://github.com/protocolbuffers/protobuf/archive/refs/tags/v3.17.3.tar.gz"
+    local URL="https://github.com/protocolbuffers/protobuf/archive/refs/tags/v3.17.3.tar.gz"
     local FILE=protobuf-3.17.3.tar.gz
     local DIR=protobuf-3.17.3
     local MD5SUM="d7f8e0e3ffeac721e18cdf898eff7d31"
@@ -318,7 +318,7 @@ function parse_proto(){
 }
 
 function build_leveldb() {
-    local URL="https://gh.llkk.cc/https://github.com/google/leveldb/archive/refs/tags/1.23.tar.gz"
+    local URL="https://github.com/google/leveldb/archive/refs/tags/1.23.tar.gz"
     local FILE=leveldb-1.23.tar.gz
     local DIR=leveldb-1.23
     local MD5SUM="afbde776fb8760312009963f09a586c7"
@@ -335,7 +335,7 @@ function build_leveldb() {
 }
 
 function build_openssl() {
-    local URL="https://gh.llkk.cc/https://github.com/openssl/openssl/archive/refs/tags/OpenSSL_1_1_1.tar.gz"
+    local URL="https://github.com/openssl/openssl/archive/refs/tags/OpenSSL_1_1_1.tar.gz"
     local FILE=openssl-OpenSSL_1_1_1.tar.gz
     local DIR=openssl-OpenSSL_1_1_1
     local MD5SUM="d65944e4aa4de6ad9858e02c82d85183"
@@ -360,7 +360,7 @@ function build_openssl() {
 }
 
 function build_brpc() {
-    local URL="https://gh.llkk.cc/https://github.com/apache/brpc/archive/refs/tags/1.11.0.tar.gz"
+    local URL="https://github.com/apache/brpc/archive/refs/tags/1.11.0.tar.gz"
     local FILE=brpc-1.11.0.tar.gz
     local DIR=brpc-1.11.0
     local MD5SUM="f55e582fb8032768f9070865b48e892d"
@@ -385,7 +385,7 @@ function build_brpc() {
     sed '/set(OPENSSL_ROOT_DIR/,/)/ d' ./CMakeLists.txt >./CMakeLists.txt.bak
     mv ./CMakeLists.txt.bak ./CMakeLists.txt
     cmake -B build . -DBUILD_SHARED_LIBS=ON -DWITH_GLOG=ON -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" \
-        -DCMAKE_LIBRARY_PATH="${TP_INSTALL_DIR}/lib64" -DCMAKE_INCLUDE_PATH="${TP_INSTALL_DIR}/include" \
+        -DCMAKE_LIBRARY_PATH="${TP_INSTALL_DIR}/lib64" -DCMAKE_INCLUDE_PATH="${TP_INSTALL_DIR}/include;${TP_INSTALL_DIR}/include/snappy" \
         -DBUILD_BRPC_TOOLS=OFF \
         -DWITH_SNAPPY=ON \
         -DPROTOBUF_PROTOC_EXECUTABLE="${TP_INSTALL_DIR}/bin/protoc"
@@ -397,7 +397,7 @@ function build_brpc() {
         
 
 function build_snappy() {
-    local URL="https://gh.llkk.cc/https://github.com/google/snappy/archive/refs/tags/1.2.1.tar.gz"
+    local URL="https://github.com/google/snappy/archive/refs/tags/1.2.1.tar.gz"
     local FILE=snappy-1.2.1.tar.gz
     local DIR=snappy-1.2.1
     local MD5SUM="dd6f9b667e69491e1dbf7419bdf68823"
@@ -417,7 +417,7 @@ function build_snappy() {
 }
 
 function build_lz4() {
-    local URL="https://gh.llkk.cc/https://github.com/lz4/lz4/archive/refs/tags/v1.9.4.tar.gz"
+    local URL="https://github.com/lz4/lz4/archive/refs/tags/v1.9.4.tar.gz"
     local FILE=lz4-1.9.4.tar.gz
     local DIR=lz4-1.9.4
     local MD5SUM="e9286adb64040071c5e23498bf753261"
@@ -445,7 +445,7 @@ function build_bzip() {
 }
 
 function build_rocksdb() {
-    local URL="https://gh.llkk.cc/https://github.com/facebook/rocksdb/archive/refs/tags/v8.0.0.tar.gz"
+    local URL="https://github.com/facebook/rocksdb/archive/refs/tags/v8.0.0.tar.gz"
     local FILE=rocksdb-8.0.0.tar.gz
     local DIR=rocksdb-8.0.0
     local MD5SUM="148458e1efd16cc235a0ddb2796313f0"
@@ -462,7 +462,7 @@ function build_rocksdb() {
 }
 
 function build_roaringbitmap() {
-    local URL="https://gh.llkk.cc/https://github.com/RoaringBitmap/CRoaring/archive/refs/tags/v2.1.2.tar.gz"
+    local URL="https://github.com/RoaringBitmap/CRoaring/archive/refs/tags/v2.1.2.tar.gz"
     local FILE=CRoaring-2.1.2.tar.gz
     local DIR=CRoaring-2.1.2
     local MD5SUM="419bfbafdf93e9a7e6cdc234454908fc"
@@ -480,7 +480,7 @@ function build_roaringbitmap() {
 
 
 function build_nuraft() {
-    local URL="https://gh.llkk.cc/https://github.com/eBay/NuRaft/archive/refs/tags/v2.1.0.tar.gz"
+    local URL="https://github.com/eBay/NuRaft/archive/refs/tags/v2.1.0.tar.gz"
     local FILE=v2.1.0.tar.gz
     local DIR=NuRaft-2.1.0
     local MD5SUM="46a3da6e038e9347cb33f714ac52c541"
@@ -489,7 +489,7 @@ function build_nuraft() {
     [ -d ${TP_SOURCE_DIR}/${DIR} ] || tar xvf ${TP_SOURCE_DIR}/${FILE} -C ${TP_SOURCE_DIR}
     cd ${TP_SOURCE_DIR}/${DIR}
     rm -rf asio
-    git clone https://gh.llkk.cc/https://github.com/chriskohlhoff/asio -b asio-1-24-0
+    git clone https://github.com/chriskohlhoff/asio -b asio-1-24-0
     cmake -B build .  -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" 
     make -C build -j ${PARALLEL} install
     cp src/event_awaiter.h ${TP_INCLUDE_DIR}/libnuraft
@@ -497,7 +497,7 @@ function build_nuraft() {
 }
 
 function build_curl() {
-    local URL=" https://gh.llkk.cc/https://github.com/curl/curl/releases/download/curl-8_11_1/curl-8.11.1.tar.gz"
+    local URL="https://github.com/curl/curl/releases/download/curl-8_11_1/curl-8.11.1.tar.gz"
     local FILE=curl-8.11.1.tar.gz
     local DIR=curl-8.11.1
     local MD5SUM="8eed752aeeb8ee54063b75baf95d3e14"
@@ -513,7 +513,7 @@ function build_curl() {
 
 
 function build_etcdclient() {
-    local URL=" https://gh.llkk.cc/https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3/archive/refs/tags/v0.15.4.tar.gz"
+    local URL="https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3/archive/refs/tags/v0.15.4.tar.gz"
     local FILE=v0.15.4.tar.gz
     local DIR=etcd-cpp-apiv3-0.15.4
     local MD5SUM="2f886420c47fc826234a4c5194863a8e"
@@ -523,7 +523,7 @@ function build_etcdclient() {
     [ -d ${TP_SOURCE_DIR}/${DIR} ] || tar xvf ${TP_SOURCE_DIR}/${FILE} -C ${TP_SOURCE_DIR}
 
     cd ${TP_SOURCE_DIR}/${DIR}
-    cmake -B build .  -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" 
+    cmake -B build .  -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" -DBUILD_ETCD_CORE_ONLY=ON -DBUILD_ETCD_TESTS=OFF -DETCD_W_STRICT=OFF
     make -C build -j ${PARALLEL} install
 }
 

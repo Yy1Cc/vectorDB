@@ -251,3 +251,7 @@ docs/dev
 # Submission zip files
 *.zip
 *.tar*
+
+# Python cache
+__pycache__/
+*.pyc

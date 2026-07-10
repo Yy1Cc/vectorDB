@@ -1,0 +1,7 @@
+{
+  "write_to_leader": "20/20",
+  "replication_to_follower": "10/10",
+  "search_consistency": "5/5",
+  "batch_replication": "10/10",
+  "cluster_nodes": 2
+}
