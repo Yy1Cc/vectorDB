@@ -8,8 +8,7 @@
 #include <map>
 
 namespace vectordb {
-class IndexFactory: public Singleton<IndexFactory>{
-    friend class  Singleton<IndexFactory>;
+class IndexFactory {
 public:
     enum class IndexType {
         FLAT,
@@ -28,6 +27,9 @@ public:
         L2,
         IP
     };
+
+    IndexFactory() = default;
+    ~IndexFactory() = default;
 
     void Init(IndexType type, int dim,  int num_data, MetricType metric = MetricType::L2);
     auto GetIndex(IndexType type) const -> void*;

@@ -1,13 +1,14 @@
 #include "database/persistence.h"
-#include <rapidjson/document.h>      // 包含 <rapidjson/document.h> 以使用 rapidjson::Document 类型
-#include <rapidjson/stringbuffer.h>  // 包含 rapidjson/stringbuffer.h 以使用 StringBuffer 类
-#include <rapidjson/writer.h>        // 包含 rapidjson/writer.h 以使用 Writer 类
+#include <rapidjson/document.h>
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include "common/vector_utils.h"
+#include "collection/collection_manager.h"
 #include "logger/logger.h"
 namespace vectordb {
 
@@ -140,21 +141,35 @@ void Persistence::ReadNextWalLog(std::string *operation_type, rapidjson::Documen
   global_logger->debug("No more WAL log entries to read");
 }
 
-void Persistence::TakeSnapshot() {          // 移除 takeSnapshot 方法的参数
-  global_logger->debug("Taking snapshot");  // 添加调试信息
+void Persistence::TakeSnapshot() {
+  global_logger->debug("Taking snapshot");
 
   last_snapshot_id_ = increase_id_;
   std::string snapshot_folder_path = Cfg::Instance().SnapPath();
-  auto &index_factory = IndexFactory::Instance();  // 通过全局指针获取 IndexFactory 实例
-  index_factory.SaveIndex(snapshot_folder_path);
+  // 遍历所有 Collection，保存各自的索引
+  auto names = CollectionManager::Instance().ListCollections();
+  for (const auto& name : names) {
+    auto* coll = CollectionManager::Instance().GetCollection(name);
+    if (coll != nullptr) {
+      std::string coll_path = snapshot_folder_path + name + "_";
+      coll->index_factory.SaveIndex(coll_path);
+    }
+  }
   SaveLastSnapshotId(snapshot_folder_path);
 }
 
-void Persistence::LoadSnapshot() {           // 添加 loadSnapshot 方法实现
-  global_logger->debug("Loading snapshot");  // 添加调试信息
-  auto &index_factory = IndexFactory::Instance();
+void Persistence::LoadSnapshot() {
+  global_logger->debug("Loading snapshot");
   std::string snapshot_folder_path = Cfg::Instance().SnapPath();
-  index_factory.LoadIndex(snapshot_folder_path);  // 将 scalar_storage 传递给 loadIndex 方法
+  // 遍历所有 Collection，加载各自的索引
+  auto names = CollectionManager::Instance().ListCollections();
+  for (const auto& name : names) {
+    auto* coll = CollectionManager::Instance().GetCollection(name);
+    if (coll != nullptr) {
+      std::string coll_path = snapshot_folder_path + name + "_";
+      coll->index_factory.LoadIndex(coll_path);
+    }
+  }
 }
 
 void Persistence::SaveLastSnapshotId(const std::string &folder_path) {  // 添加 saveLastSnapshotID 方法实现

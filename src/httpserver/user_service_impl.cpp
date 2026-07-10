@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <iostream>
 #include "common/constants.h"
+#include "collection/collection_manager.h"
 #include "index/faiss_index.h"
 #include "index/hnswlib_index.h"
 #include "index/layered_index.h"
@@ -20,14 +21,11 @@ void UserServiceImpl::search(::google::protobuf::RpcController *controller, cons
   brpc::ClosureGuard done_guard(done);
   auto *cntl = static_cast<brpc::Controller *>(controller);
 
-  // 解析JSON请求
   rapidjson::Document json_request;
   json_request.Parse(cntl->request_attachment().to_string().c_str());
 
-  // 打印用户的输入参数
   global_logger->info("Search request parameters: {}", cntl->request_attachment().to_string());
 
-  // 检查JSON文档是否为有效对象
   if (!json_request.IsObject()) {
     global_logger->error("Invalid JSON request");
     cntl->http_response().set_status_code(400);
@@ -36,7 +34,6 @@ void UserServiceImpl::search(::google::protobuf::RpcController *controller, cons
     return;
   }
 
-  // 检查请求的合法性
   if (!IsRequestValid(json_request, BaseServiceImpl::CheckType::SEARCH)) {
     global_logger->error("Missing vectors or k parameter in the request");
     cntl->http_response().set_status_code(400);
@@ -45,7 +42,6 @@ void UserServiceImpl::search(::google::protobuf::RpcController *controller, cons
     return;
   }
 
-  // 获取查询参数
   std::vector<float> query;
   for (const auto &q : json_request[REQUEST_VECTORS].GetArray()) {
     query.push_back(q.GetFloat());
@@ -54,10 +50,8 @@ void UserServiceImpl::search(::google::protobuf::RpcController *controller, cons
 
   global_logger->debug("Query parameters: k = {}", k);
 
-  // 获取请求参数中的索引类型
   IndexFactory::IndexType index_type = GetIndexTypeFromRequest(json_request);
 
-  // 如果索引类型为UNKNOWN，返回400错误
   if (index_type == IndexFactory::IndexType::UNKNOWN) {
     global_logger->error("Invalid indexType parameter in the request");
     cntl->http_response().set_status_code(400);
@@ -66,15 +60,18 @@ void UserServiceImpl::search(::google::protobuf::RpcController *controller, cons
     return;
   }
 
-  // 使用 VectorDatabase 的 search 接口执行查询
-  std::pair<std::vector<int64_t>, std::vector<float>> results = vector_database_->Search(json_request);
+  // 解析 collectionName（默认 "default"）
+  std::string collection_name = DEFAULT_COLLECTION_NAME;
+  if (json_request.HasMember(REQUEST_COLLECTION_NAME) && json_request[REQUEST_COLLECTION_NAME].IsString()) {
+    collection_name = json_request[REQUEST_COLLECTION_NAME].GetString();
+  }
 
-  // 将结果转换为JSON
+  std::pair<std::vector<int64_t>, std::vector<float>> results = vector_database_->Search(collection_name, json_request);
+
   rapidjson::Document json_response;
   json_response.SetObject();
   rapidjson::Document::AllocatorType &allocator = json_response.GetAllocator();
 
-  // 检查是否有有效的搜索结果
   bool valid_results = false;
   rapidjson::Value vectors(rapidjson::kArrayType);
   rapidjson::Value distances(rapidjson::kArrayType);
@@ -91,7 +88,6 @@ void UserServiceImpl::search(::google::protobuf::RpcController *controller, cons
     json_response.AddMember(RESPONSE_DISTANCES, distances, allocator);
   }
 
-  // 设置响应
   json_response.AddMember(RESPONSE_RETCODE, RESPONSE_RETCODE_SUCCESS, allocator);
   SetJsonResponse(json_response, cntl);
 }
@@ -101,14 +97,11 @@ void UserServiceImpl::insert(::google::protobuf::RpcController *controller, cons
   global_logger->debug("Received insert request");
   brpc::ClosureGuard done_guard(done);
   auto *cntl = static_cast<brpc::Controller *>(controller);
-  // 解析JSON请求
   rapidjson::Document json_request;
   json_request.Parse(cntl->request_attachment().to_string().c_str());
 
-  // 打印用户的输入参数
   global_logger->info("Insert request parameters: {}", cntl->request_attachment().to_string());
 
-  // 检查JSON文档是否为有效对象
   if (!json_request.IsObject()) {
     global_logger->error("Invalid JSON request");
     cntl->http_response().set_status_code(400);
@@ -116,27 +109,23 @@ void UserServiceImpl::insert(::google::protobuf::RpcController *controller, cons
     return;
   }
 
-  // 检查请求的合法性
-  if (!IsRequestValid(json_request, BaseServiceImpl::CheckType::INSERT)) {  // 添加对isRequestValid的调用
+  if (!IsRequestValid(json_request, BaseServiceImpl::CheckType::INSERT)) {
     global_logger->error("Missing vectors or id parameter in the request");
     cntl->http_response().set_status_code(400);
     SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Missing vectors or k parameter in the request");
     return;
   }
 
-  // 获取插入参数
   std::vector<float> data;
   for (const auto &d : json_request[REQUEST_VECTORS].GetArray()) {
     data.push_back(d.GetFloat());
   }
-  uint64_t label = json_request[REQUEST_ID].GetUint64();  // 使用宏定义
+  uint64_t label = json_request[REQUEST_ID].GetUint64();
 
   global_logger->debug("Insert parameters: label = {}", label);
 
-  // 获取请求参数中的索引类型
   IndexFactory::IndexType index_type = GetIndexTypeFromRequest(json_request);
 
-  // 如果索引类型为UNKNOWN，返回400错误
   if (index_type == IndexFactory::IndexType::UNKNOWN) {
     global_logger->error("Invalid indexType parameter in the request");
     cntl->http_response().set_status_code(400);
@@ -144,11 +133,35 @@ void UserServiceImpl::insert(::google::protobuf::RpcController *controller, cons
     return;
   }
 
-  // 使用全局IndexFactory获取索引对象
-  void *index = IndexFactory::Instance().GetIndex(index_type);
+  // 解析 collectionName（默认 "default"）
+  std::string collection_name = DEFAULT_COLLECTION_NAME;
+  if (json_request.HasMember(REQUEST_COLLECTION_NAME) && json_request[REQUEST_COLLECTION_NAME].IsString()) {
+    collection_name = json_request[REQUEST_COLLECTION_NAME].GetString();
+  }
+
+  // 通过 CollectionManager 获取对应 Collection 的索引，不存在则自动创建
+  auto* coll = CollectionManager::Instance().GetCollection(collection_name);
+  if (coll == nullptr) {
+    int dim = static_cast<int>(data.size());
+    if (dim <= 0) {
+      global_logger->error("Collection '{}' not found and cannot infer dimension", collection_name);
+      cntl->http_response().set_status_code(400);
+      SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Collection not found");
+      return;
+    }
+    global_logger->info("Auto-creating collection '{}' dim={}", collection_name, dim);
+    CollectionManager::Instance().CreateCollection(collection_name, dim, 1000000);
+    coll = CollectionManager::Instance().GetCollection(collection_name);
+    if (coll == nullptr) {
+      cntl->http_response().set_status_code(400);
+      SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Failed to create collection");
+      return;
+    }
+  }
+
+  void *index = coll->GetIndex(index_type);
   assert(index != nullptr);
 
-  // 根据索引类型初始化索引对象并调用insert_vectors函数
   switch (index_type) {
     case IndexFactory::IndexType::FLAT:
     case IndexFactory::IndexType::SQ8:
@@ -174,12 +187,10 @@ void UserServiceImpl::insert(::google::protobuf::RpcController *controller, cons
       break;
   }
 
-  // 设置响应
   rapidjson::Document json_response;
   json_response.SetObject();
   rapidjson::Document::AllocatorType &allocator = json_response.GetAllocator();
 
-  // 添加retCode到响应
   json_response.AddMember(RESPONSE_RETCODE, RESPONSE_RETCODE_SUCCESS, allocator);
 
   SetJsonResponse(json_response, cntl);
@@ -264,10 +275,16 @@ void UserServiceImpl::query(::google::protobuf::RpcController *controller, const
   }
 
   // 从JSON请求中获取ID
-  uint64_t id = json_request[REQUEST_ID].GetUint64();  // 使用宏REQUEST_ID
+  uint64_t id = json_request[REQUEST_ID].GetUint64();
+
+  // 解析 collectionName（默认 "default"）
+  std::string collection_name = DEFAULT_COLLECTION_NAME;
+  if (json_request.HasMember(REQUEST_COLLECTION_NAME) && json_request[REQUEST_COLLECTION_NAME].IsString()) {
+    collection_name = json_request[REQUEST_COLLECTION_NAME].GetString();
+  }
 
   // 查询JSON数据
-  rapidjson::Document json_data = vector_database_->Query(id);
+  rapidjson::Document json_data = vector_database_->Query(collection_name, id);
 
   // 将结果转换为JSON
   rapidjson::Document json_response;

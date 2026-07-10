@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <iostream>
 #include "common/constants.h"
+#include "collection/collection_manager.h"
 #include "index/faiss_index.h"
 #include "index/hnswlib_index.h"
 #include "index/index_factory.h"
@@ -158,6 +159,141 @@ void AdminServiceImpl::GetNode(::google::protobuf::RpcController *controller, co
 
   // 设置响应
   json_response.AddMember(RESPONSE_RETCODE, RESPONSE_RETCODE_SUCCESS, allocator);
+  SetJsonResponse(json_response, cntl);
+}
+
+void AdminServiceImpl::createCollection(::google::protobuf::RpcController *controller,
+                                         const ::nvm::HttpRequest * /*request*/,
+                                         ::nvm::HttpResponse * /*response*/,
+                                         ::google::protobuf::Closure *done) {
+  global_logger->debug("Received createCollection request");
+  brpc::ClosureGuard done_guard(done);
+  auto *cntl = static_cast<brpc::Controller *>(controller);
+
+  rapidjson::Document json_request;
+  json_request.Parse(cntl->request_attachment().to_string().c_str());
+
+  if (!json_request.IsObject()) {
+    cntl->http_response().set_status_code(400);
+    SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Invalid JSON request");
+    return;
+  }
+
+  if (!json_request.HasMember("name") || !json_request.HasMember("dimension")) {
+    cntl->http_response().set_status_code(400);
+    SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Missing name or dimension");
+    return;
+  }
+
+  std::string name = json_request["name"].GetString();
+  int dim = json_request["dimension"].GetInt();
+  int num_data = json_request.HasMember("numData") ? json_request["numData"].GetInt() : 1000000;
+  IndexFactory::MetricType metric = IndexFactory::MetricType::L2;
+  if (json_request.HasMember("metric") && std::string(json_request["metric"].GetString()) == "IP") {
+    metric = IndexFactory::MetricType::IP;
+  }
+
+  bool success = CollectionManager::Instance().CreateCollection(name, dim, num_data, metric);
+
+  rapidjson::Document json_response;
+  json_response.SetObject();
+  rapidjson::Document::AllocatorType &allocator = json_response.GetAllocator();
+  json_response.AddMember(RESPONSE_RETCODE, success ? RESPONSE_RETCODE_SUCCESS : RESPONSE_RETCODE_ERROR, allocator);
+  if (!success) {
+    json_response.AddMember(RESPONSE_ERROR_MSG, rapidjson::Value("Collection already exists or invalid params", allocator), allocator);
+  }
+  SetJsonResponse(json_response, cntl);
+}
+
+void AdminServiceImpl::dropCollection(::google::protobuf::RpcController *controller,
+                                       const ::nvm::HttpRequest * /*request*/,
+                                       ::nvm::HttpResponse * /*response*/,
+                                       ::google::protobuf::Closure *done) {
+  global_logger->debug("Received dropCollection request");
+  brpc::ClosureGuard done_guard(done);
+  auto *cntl = static_cast<brpc::Controller *>(controller);
+
+  rapidjson::Document json_request;
+  json_request.Parse(cntl->request_attachment().to_string().c_str());
+
+  if (!json_request.IsObject() || !json_request.HasMember("name")) {
+    cntl->http_response().set_status_code(400);
+    SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Missing name");
+    return;
+  }
+
+  std::string name = json_request["name"].GetString();
+  bool success = CollectionManager::Instance().DropCollection(name);
+
+  rapidjson::Document json_response;
+  json_response.SetObject();
+  rapidjson::Document::AllocatorType &allocator = json_response.GetAllocator();
+  json_response.AddMember(RESPONSE_RETCODE, success ? RESPONSE_RETCODE_SUCCESS : RESPONSE_RETCODE_ERROR, allocator);
+  if (!success) {
+    json_response.AddMember(RESPONSE_ERROR_MSG, rapidjson::Value("Collection not found or is default", allocator), allocator);
+  }
+  SetJsonResponse(json_response, cntl);
+}
+
+void AdminServiceImpl::listCollections(::google::protobuf::RpcController *controller,
+                                        const ::nvm::HttpRequest * /*request*/,
+                                        ::nvm::HttpResponse * /*response*/,
+                                        ::google::protobuf::Closure *done) {
+  global_logger->debug("Received listCollections request");
+  brpc::ClosureGuard done_guard(done);
+  auto *cntl = static_cast<brpc::Controller *>(controller);
+
+  auto names = CollectionManager::Instance().ListCollections();
+
+  rapidjson::Document json_response;
+  json_response.SetObject();
+  rapidjson::Document::AllocatorType &allocator = json_response.GetAllocator();
+
+  rapidjson::Value collections_array(rapidjson::kArrayType);
+  for (const auto &name : names) {
+    collections_array.PushBack(rapidjson::Value(name.c_str(), allocator), allocator);
+  }
+  json_response.AddMember("collections", collections_array, allocator);
+  json_response.AddMember(RESPONSE_RETCODE, RESPONSE_RETCODE_SUCCESS, allocator);
+  SetJsonResponse(json_response, cntl);
+}
+
+void AdminServiceImpl::getCollectionInfo(::google::protobuf::RpcController *controller,
+                                          const ::nvm::HttpRequest * /*request*/,
+                                          ::nvm::HttpResponse * /*response*/,
+                                          ::google::protobuf::Closure *done) {
+  global_logger->debug("Received getCollectionInfo request");
+  brpc::ClosureGuard done_guard(done);
+  auto *cntl = static_cast<brpc::Controller *>(controller);
+
+  rapidjson::Document json_request;
+  json_request.Parse(cntl->request_attachment().to_string().c_str());
+
+  if (!json_request.IsObject() || !json_request.HasMember("name")) {
+    cntl->http_response().set_status_code(400);
+    SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Missing name");
+    return;
+  }
+
+  std::string name = json_request["name"].GetString();
+  CollectionMeta meta;
+  bool found = CollectionManager::Instance().GetCollectionMeta(name, meta);
+
+  rapidjson::Document json_response;
+  json_response.SetObject();
+  rapidjson::Document::AllocatorType &allocator = json_response.GetAllocator();
+
+  if (found) {
+    json_response.AddMember("name", rapidjson::Value(meta.name.c_str(), allocator), allocator);
+    json_response.AddMember("dimension", meta.dimension, allocator);
+    json_response.AddMember("numData", meta.num_data, allocator);
+    json_response.AddMember("metric", rapidjson::Value(meta.metric == IndexFactory::MetricType::IP ? "IP" : "L2", allocator), allocator);
+    json_response.AddMember("createdAt", rapidjson::Value(meta.created_at.c_str(), allocator), allocator);
+    json_response.AddMember(RESPONSE_RETCODE, RESPONSE_RETCODE_SUCCESS, allocator);
+  } else {
+    json_response.AddMember(RESPONSE_RETCODE, RESPONSE_RETCODE_ERROR, allocator);
+    json_response.AddMember(RESPONSE_ERROR_MSG, rapidjson::Value("Collection not found", allocator), allocator);
+  }
   SetJsonResponse(json_response, cntl);
 }
 

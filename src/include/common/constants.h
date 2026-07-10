@@ -36,5 +36,8 @@ namespace vectordb {
 #define OPERATION_TYPE_BATCH_UPSERT "batch_upsert" // 批量插入操作类型
 #define REQUEST_ITEMS "items" // 批量操作的数据项数组
 
+#define REQUEST_COLLECTION_NAME "collectionName" // Collection 名称字段
+#define DEFAULT_COLLECTION_NAME "default" // 默认 Collection 名称
+
 // 其他字符串常量...
 }  // namespace vectordb

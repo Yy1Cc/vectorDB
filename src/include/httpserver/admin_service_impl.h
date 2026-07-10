@@ -30,6 +30,15 @@ class AdminServiceImpl : public nvm::AdminService, public BaseServiceImpl {
   void GetNode(::google::protobuf::RpcController *controller, const ::nvm::HttpRequest * /*request*/,
                ::nvm::HttpResponse * /*response*/, ::google::protobuf::Closure *done) override;
 
+  void createCollection(::google::protobuf::RpcController *controller, const ::nvm::HttpRequest * /*request*/,
+                        ::nvm::HttpResponse * /*response*/, ::google::protobuf::Closure *done) override;
+  void dropCollection(::google::protobuf::RpcController *controller, const ::nvm::HttpRequest * /*request*/,
+                      ::nvm::HttpResponse * /*response*/, ::google::protobuf::Closure *done) override;
+  void listCollections(::google::protobuf::RpcController *controller, const ::nvm::HttpRequest * /*request*/,
+                       ::nvm::HttpResponse * /*response*/, ::google::protobuf::Closure *done) override;
+  void getCollectionInfo(::google::protobuf::RpcController *controller, const ::nvm::HttpRequest * /*request*/,
+                         ::nvm::HttpResponse * /*response*/, ::google::protobuf::Closure *done) override;
+
  private:
   VectorDatabase *vector_database_ = nullptr;
   RaftStuff *raft_stuff_ = nullptr;

@@ -37,5 +37,9 @@ rpc SetLeader(HttpRequest) returns (HttpResponse);
 rpc AddFollower(HttpRequest) returns (HttpResponse);
 rpc ListNode(HttpRequest) returns (HttpResponse);
 rpc GetNode(HttpRequest) returns (HttpResponse);
+rpc createCollection(HttpRequest) returns (HttpResponse);
+rpc dropCollection(HttpRequest) returns (HttpResponse);
+rpc listCollections(HttpRequest) returns (HttpResponse);
+rpc getCollectionInfo(HttpRequest) returns (HttpResponse);
 };
 
