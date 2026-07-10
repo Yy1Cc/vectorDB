@@ -17,6 +17,12 @@ void VdbServerInit(int node_id) {
   indexfactory.Init(IndexFactory::IndexType::FLAT, dim, num_data);
   indexfactory.Init(IndexFactory::IndexType::HNSW, dim, num_data);
   indexfactory.Init(IndexFactory::IndexType::FILTER, dim, num_data);
+  indexfactory.Init(IndexFactory::IndexType::SQ8, dim, num_data);
+  indexfactory.Init(IndexFactory::IndexType::SQ4, dim, num_data);
+  indexfactory.Init(IndexFactory::IndexType::IP_FLAT, dim, num_data, IndexFactory::MetricType::IP);
+  indexfactory.Init(IndexFactory::IndexType::IP_SQ8, dim, num_data, IndexFactory::MetricType::IP);
+  indexfactory.Init(IndexFactory::IndexType::LAYERED_FLAT, dim, num_data);
+  indexfactory.Init(IndexFactory::IndexType::LAYERED_SQ8, dim, num_data);
 }
 
 

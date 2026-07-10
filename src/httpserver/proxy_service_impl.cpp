@@ -223,6 +223,10 @@ auto ProxyServiceImpl::SendRequestToPartition(brpc::Controller *cntl, const std:
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
 
   CURLcode res = curl_easy_perform(curl);
+
+  // 释放 headers
+  curl_slist_free_all(headers);
+
   if (res != CURLE_OK) {
     global_logger->error("Curl request failed");
     curl_easy_cleanup(curl);
@@ -303,28 +307,38 @@ void ProxyServiceImpl::ForwardToTargetNode(brpc::Controller *cntl, const std::st
   std::string target_url = targetNode.url_ + path;
   global_logger->info("Forwarding request to: {}", target_url);
 
-  // 设置 CURL 选项
-  curl_easy_setopt(curl_handle_, CURLOPT_URL, target_url.c_str());
+  // 每次请求创建独立的 CURL handle，避免共享 handle 状态污染
+  CURL *curl = curl_easy_init();
+  if (curl == nullptr) {
+    global_logger->error("CURL initialization failed");
+    SetTextResponse("Internal Server Error", cntl, 500);
+    return;
+  }
 
-  // 设置为 POST 请求
-  curl_easy_setopt(curl_handle_, CURLOPT_POST, 1L);
+  // 设置 CURL 选项
+  curl_easy_setopt(curl, CURLOPT_URL, target_url.c_str());
+  curl_easy_setopt(curl, CURLOPT_POST, 1L);
 
   // 设置请求头
   struct curl_slist *headers = nullptr;
   headers = curl_slist_append(headers, "Content-Type: application/json");
-  curl_easy_setopt(curl_handle_, CURLOPT_HTTPHEADER, headers);
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
   std::string request_data = cntl->request_attachment().to_string();
   global_logger->info("request_data: {}", request_data);
-  curl_easy_setopt(curl_handle_, CURLOPT_POSTFIELDS, request_data.c_str());
-  curl_easy_setopt(curl_handle_, CURLOPT_WRITEFUNCTION, WriteCallback);
+  curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_data.c_str());
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
 
   // 响应数据容器
   std::string response_data;
-  curl_easy_setopt(curl_handle_, CURLOPT_WRITEDATA, &response_data);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
 
   // 执行 CURL 请求
-  CURLcode curl_res = curl_easy_perform(curl_handle_);
+  CURLcode curl_res = curl_easy_perform(curl);
+
+  // 释放 headers
+  curl_slist_free_all(headers);
+
   if (curl_res != CURLE_OK) {
     global_logger->error("curl_easy_perform() failed");
     SetTextResponse("Internal Server Error", cntl, 500);
@@ -338,10 +352,18 @@ void ProxyServiceImpl::ForwardToTargetNode(brpc::Controller *cntl, const std::st
       SetJsonResponse(response_data, cntl);
     }
   }
+  curl_easy_cleanup(curl);
 }
 
 void ProxyServiceImpl::FetchAndUpdateNodes() {
   global_logger->info("Fetching nodes from Master Server");
+
+  // 创建独立的 CURL handle
+  CURL *curl = curl_easy_init();
+  if (curl == nullptr) {
+    global_logger->error("CURL initialization failed");
+    return;
+  }
 
   // 构建请求 URL
   std::string url =
@@ -351,29 +373,33 @@ void ProxyServiceImpl::FetchAndUpdateNodes() {
   std::string json_data = "{\"instanceId\": " + std::to_string(instance_id_) + "}";
 
   // 设置 CURL 选项
-  curl_easy_setopt(curl_handle_, CURLOPT_URL, url.c_str());
-
-  // 设置为 POST 请求
-  curl_easy_setopt(curl_handle_, CURLOPT_POST, 1L);
+  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(curl, CURLOPT_POST, 1L);
 
   // 设置请求头
   struct curl_slist *headers = nullptr;
   headers = curl_slist_append(headers, "Content-Type: application/json");
-  curl_easy_setopt(curl_handle_, CURLOPT_HTTPHEADER, headers);
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
   // 设置 POST 数据
-  curl_easy_setopt(curl_handle_, CURLOPT_POSTFIELDS, json_data.c_str());
+  curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_data.c_str());
 
   std::string response_data;
-  curl_easy_setopt(curl_handle_, CURLOPT_WRITEFUNCTION, BaseServiceImpl::WriteCallback);
-  curl_easy_setopt(curl_handle_, CURLOPT_WRITEDATA, &response_data);
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, BaseServiceImpl::WriteCallback);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
 
   // 执行 CURL 请求
-  CURLcode curl_res = curl_easy_perform(curl_handle_);
+  CURLcode curl_res = curl_easy_perform(curl);
+
+  // 释放 headers
+  curl_slist_free_all(headers);
+
   if (curl_res != CURLE_OK) {
     global_logger->error("curl_easy_perform() failed: {}", curl_easy_strerror(curl_res));
+    curl_easy_cleanup(curl);
     return;
   }
+  curl_easy_cleanup(curl);
 
   // 解析响应数据
   rapidjson::Document doc;
@@ -410,38 +436,48 @@ void ProxyServiceImpl::FetchAndUpdateNodes() {
 
 void ProxyServiceImpl::FetchAndUpdatePartitionConfig() {
   global_logger->info("Fetching Partition Config from Master Server");
-  // 使用 curl 获取分区配置
+
+  // 创建独立的 CURL handle
+  CURL *curl = curl_easy_init();
+  if (curl == nullptr) {
+    global_logger->error("CURL initialization failed");
+    return;
+  }
+
   // 构建请求 URL
   std::string url =
       "http://" + master_server_host_ + ":" + std::to_string(master_server_port_) + "/MasterService/GetPartitionConfig";
 
   // 创建 JSON 数据
   std::string json_data = "{\"instanceId\": " + std::to_string(instance_id_) + "}";
+
   // 设置 CURL 选项
-  curl_easy_setopt(curl_handle_, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(curl, CURLOPT_POST, 1L);
 
-  // 设置为 POST 请求
-  curl_easy_setopt(curl_handle_, CURLOPT_POST, 1L);
-
-  
   // 设置请求头
   struct curl_slist *headers = nullptr;
   headers = curl_slist_append(headers, "Content-Type: application/json");
-  curl_easy_setopt(curl_handle_, CURLOPT_HTTPHEADER, headers);
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
   // 设置 POST 数据
-  curl_easy_setopt(curl_handle_, CURLOPT_POSTFIELDS, json_data.c_str());
-
+  curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_data.c_str());
 
   std::string response_data;
-  curl_easy_setopt(curl_handle_, CURLOPT_WRITEFUNCTION, WriteCallback);
-  curl_easy_setopt(curl_handle_, CURLOPT_WRITEDATA, &response_data);
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
 
-  CURLcode curl_res = curl_easy_perform(curl_handle_);
+  CURLcode curl_res = curl_easy_perform(curl);
+
+  // 释放 headers
+  curl_slist_free_all(headers);
+
   if (curl_res != CURLE_OK) {
     global_logger->error("curl_easy_perform() failed");
+    curl_easy_cleanup(curl);
     return;
   }
+  curl_easy_cleanup(curl);
 
   // 解析响应数据并更新 nodePartitions_ 数组
   rapidjson::Document doc;
@@ -470,7 +506,6 @@ void ProxyServiceImpl::FetchAndUpdatePartitionConfig() {
     uint64_t node_id = partition_val["nodeId"].GetUint64();
 
     // 查找或创建新的 NodePartitionInfo
-
     auto it = node_partitions_[inactive_index].nodes_info_.find(partition_id);
 
     if (it == node_partitions_[inactive_index].nodes_info_.end()) {
@@ -484,7 +519,6 @@ void ProxyServiceImpl::FetchAndUpdatePartitionConfig() {
     // 添加节点信息
     NodeInfo node_info;
     node_info.node_id_ = node_id;
-    // nodeInfo.url 和 nodeInfo.role 需要从某处获取或者设定
     it->second.nodes_.push_back(node_info);
   }
 

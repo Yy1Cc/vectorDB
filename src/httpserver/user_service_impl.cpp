@@ -9,6 +9,7 @@
 #include "common/constants.h"
 #include "index/faiss_index.h"
 #include "index/hnswlib_index.h"
+#include "index/layered_index.h"
 #include "index/index_factory.h"
 #include "logger/logger.h"
 namespace vectordb {
@@ -149,7 +150,11 @@ void UserServiceImpl::insert(::google::protobuf::RpcController *controller, cons
 
   // 根据索引类型初始化索引对象并调用insert_vectors函数
   switch (index_type) {
-    case IndexFactory::IndexType::FLAT: {
+    case IndexFactory::IndexType::FLAT:
+    case IndexFactory::IndexType::SQ8:
+    case IndexFactory::IndexType::SQ4:
+    case IndexFactory::IndexType::IP_FLAT:
+    case IndexFactory::IndexType::IP_SQ8: {
       auto *faiss_index = static_cast<FaissIndex *>(index);
       faiss_index->InsertVectors(data, label);
       break;
@@ -159,7 +164,12 @@ void UserServiceImpl::insert(::google::protobuf::RpcController *controller, cons
       hnsw_index->InsertVectors(data, label);
       break;
     }
-    // 在此处添加其他索引类型的处理逻辑
+    case IndexFactory::IndexType::LAYERED_FLAT:
+    case IndexFactory::IndexType::LAYERED_SQ8: {
+      auto *layered = static_cast<LayeredIndex *>(index);
+      layered->InsertVectors(data, label);
+      break;
+    }
     default:
       break;
   }

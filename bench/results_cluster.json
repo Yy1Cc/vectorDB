@@ -1,0 +1,8 @@
+{
+  "master_node_management": true,
+  "partition_config_crud": true,
+  "proxy_write_forwarding": true,
+  "proxy_search_broadcast": true,
+  "read_write_separation": true,
+  "proxy_topology": true
+}

@@ -17,13 +17,13 @@ void BaseServiceImpl::SetTextResponse(const std::string &response, brpc::Control
 
 void BaseServiceImpl::SetJsonResponse(const std::string &response, brpc::Controller *cntl) {
   cntl->response_attachment().append(response);
-  cntl->http_response().set_content_type(RESPONSE_CONTENT_TYPE_TEXT);
+  cntl->http_response().set_content_type(RESPONSE_CONTENT_TYPE_JSON);
 }
 
 void BaseServiceImpl::SetJsonResponse(const std::string &response, brpc::Controller *cntl,int status_code) {
   cntl->response_attachment().append(response);
   cntl->http_response().set_status_code(status_code);
-  cntl->http_response().set_content_type(RESPONSE_CONTENT_TYPE_TEXT);
+  cntl->http_response().set_content_type(RESPONSE_CONTENT_TYPE_JSON);
 }
 
 void BaseServiceImpl::SetTextResponse(const std::string &response, brpc::Controller *cntl,int status_code) {
@@ -77,11 +77,22 @@ auto BaseServiceImpl::GetIndexTypeFromRequest(const rapidjson::Document &json_re
   // 获取请求参数中的索引类型
   if (json_request.HasMember(REQUEST_INDEX_TYPE)) {
     std::string index_type_str = json_request[REQUEST_INDEX_TYPE].GetString();
-    if (index_type_str == "FLAT") {
+    if (index_type_str == INDEX_TYPE_FLAT) {
       return vectordb::IndexFactory::IndexType::FLAT;
-    }
-    if (index_type_str == "HNSW") {
+    } else if (index_type_str == INDEX_TYPE_HNSW) {
       return vectordb::IndexFactory::IndexType::HNSW;
+    } else if (index_type_str == INDEX_TYPE_SQ8) {
+      return vectordb::IndexFactory::IndexType::SQ8;
+    } else if (index_type_str == INDEX_TYPE_SQ4) {
+      return vectordb::IndexFactory::IndexType::SQ4;
+    } else if (index_type_str == INDEX_TYPE_IP_FLAT) {
+      return vectordb::IndexFactory::IndexType::IP_FLAT;
+    } else if (index_type_str == INDEX_TYPE_IP_SQ8) {
+      return vectordb::IndexFactory::IndexType::IP_SQ8;
+    } else if (index_type_str == INDEX_TYPE_LAYERED_FLAT) {
+      return vectordb::IndexFactory::IndexType::LAYERED_FLAT;
+    } else if (index_type_str == INDEX_TYPE_LAYERED_SQ8) {
+      return vectordb::IndexFactory::IndexType::LAYERED_SQ8;
     }
   }
   return vectordb::IndexFactory::IndexType::UNKNOWN;

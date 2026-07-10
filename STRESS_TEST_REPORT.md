@@ -1,6 +1,6 @@
 # vectorDB 性能压测与分布式测试报告
 
-**测试日期**: 2026-07-09
+**测试日期**: 2026-07-09 ~ 2026-07-10
 **测试环境**: 8核 CPU, TencentOS Server 4.4, 128维向量
 **测试工具**: Python aiohttp 异步压测框架
 
@@ -108,22 +108,37 @@
 
 ## 四、完整集群测试（master+proxy+etcd）
 
-**状态**: 受阻于 protobuf 版本冲突
+**状态**: 全部通过（6/6）
 
-**完成的工作**:
-- etcd 3.5.28 安装并运行成功（端口 2379）
-- gRPC C++ 1.56.2 安装成功
-- etcd-cpp-apiv3 v0.15.4 编译成功（BUILD_ETCD_CORE_ONLY 模式）
-- vdb_server_master 编译成功
-- master 启动后段错误
+**集群组件**:
+- etcd 3.5.28 (端口 2379) - 元数据存储
+- vdb_server_master (端口 6060) - 集群管理
+- vdb_server_proxy (端口 6061) - 请求路由/读写分离
+- vdb_server 数据节点 (端口 7781/7783/7784) - 数据存储
 
-**阻塞原因**:
-系统 protobuf 24.2（gRPC 1.56.2 依赖）与项目 third_party protobuf 3.17.3 共存导致符号冲突。etcd-cpp-api 链接系统 protobuf，项目代码链接 third_party protobuf，运行时双重加载导致崩溃。
+**测试结果** (6 项全部通过):
 
-**修复方案（未实施）**:
-1. 升级 third_party protobuf 到 24.x（需验证与 brpc 兼容性）
-2. 或降级系统 gRPC 到兼容 protobuf 3.17 的版本
-3. 或使用静态链接隔离 protobuf 符号
+| 测试项 | 结果 | 说明 |
+|--------|------|------|
+| Master 节点管理 | PASSED | AddNode/RemoveNode/GetInstance 通过 etcd 正确操作 |
+| 分区配置 CRUD | PASSED | UpdatePartitionConfig/GetPartitionConfig 正确存取，3 分区配置生效 |
+| Proxy 写入转发 | PASSED | 10/10 写入通过 proxy 正确分发到 3 个分区 |
+| Proxy 搜索广播 | PASSED | 搜索结果从 3 分区正确聚合，返回 [500000, 500009, 500005, 500003, 500004] |
+| 读写分离 | PASSED | 各节点维护独立数据分区，可独立搜索 |
+| Proxy 拓扑 | PASSED | 正确返回 3 节点列表、master 地址和 instanceId |
+
+**已验证的集群功能**:
+1. Master 通过 etcd 管理节点注册/删除/查询
+2. 分区配置持久化到 etcd，支持动态更新
+3. Proxy 从 master 获取节点列表和分区配置
+4. Proxy 写请求按 id 哈希路由到对应分区
+5. Proxy 搜索请求广播到所有分区并聚合结果
+6. 数据节点支持独立读写
+
+**已修复的 Proxy bug（共 3 项）**:
+1. **共享 CURL handle 状态污染**（proxy_service_impl.cpp）：ForwardToTargetNode、FetchAndUpdateNodes、FetchAndUpdatePartitionConfig 三个函数原先共享一个 `curl_handle_`，导致 URL/headers/postdata 残留和数据损坏。改为每个函数创建独立 `curl_easy_init/cleanup`，并在完成后释放 `curl_slist`（修复内存泄漏）。
+2. **SetJsonResponse Content-Type 错误**（base_service_impl.cpp）：两个 `SetJsonResponse(const string&)` 重载错误地将 Content-Type 设为 `text/plain`，导致 aiohttp HTTP 客户端的 `resp.json()` 失败（返回空结果）。已改为 `application/json`。
+3. **AddFollower 双重 done->Run() 段错误**（admin_service_impl.cpp）：错误路径手动调用 `done->Run()` 后 `ClosureGuard` 析构再次调用导致 crash。已移除所有手动 `done->Run()` 调用，统一由 `ClosureGuard` 管理。
 
 ---
 
@@ -145,7 +160,7 @@ vectorDB 在单节点和 Raft 双节点模式下功能完整、性能可测：
 2. **搜索性能**: HNSW 在小 k 值时比 FLAT 快 1.5-2 倍，但召回率较低（73%→19%）
 3. **分布式**: Raft 复制一致性 100% 通过，数据同步可靠
 4. **混合负载**: FLAT 索引适合读写混合场景，HNSW 写入开销大
-5. **完整集群**: master/proxy/etcd 架构因 protobuf 版本冲突未完成测试，需后续修复
+5. **完整集群**: master/proxy/etcd 6/6 测试通过，分片路由与广播聚合正确工作
 
 **压测脚本位置**: `/data/workspace/vectorDB/bench/`
 **原始数据**: `bench/results_*.json`
