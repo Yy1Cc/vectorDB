@@ -8,6 +8,7 @@
 #include "database/scalar_storage.h"
 #include "index/faiss_index.h"
 #include "index/filter_index.h"
+#include "index/garden_index.h"
 #include "index/hnswlib_index.h"
 #include "index/index_factory.h"
 #include "index/layered_index.h"
@@ -23,7 +24,7 @@ FilterIndex::Operation ParseFilterOp(const std::string& op_str) {
     if (op_str == "=") return FilterIndex::Operation::EQUAL;
     if (op_str == "!=") return FilterIndex::Operation::NOT_EQUAL;
     if (op_str == ">") return FilterIndex::Operation::GREATER_THAN;
-    if (op_str == "<") return FilterIndex::Operation::LESS_EQUAL;
+    if (op_str == "<") return FilterIndex::Operation::LESS_THAN;
     if (op_str == ">=") return FilterIndex::Operation::GREATER_EQUAL;
     if (op_str == "<=") return FilterIndex::Operation::LESS_EQUAL;
     return FilterIndex::Operation::EQUAL;
@@ -185,6 +186,11 @@ void VectorDatabase::Upsert(const std::string& collection_name, uint64_t id, con
         layered->RemoveVectors({static_cast<int64_t>(id)});
         break;
       }
+      case IndexFactory::IndexType::GARDEN_HNSW: {
+        auto *garden = static_cast<GardenIndex *>(index);
+        garden->RemoveVectors({static_cast<int64_t>(id)});
+        break;
+      }
       default:
         break;
     }
@@ -216,6 +222,22 @@ void VectorDatabase::Upsert(const std::string& collection_name, uint64_t id, con
     case IndexFactory::IndexType::LAYERED_SQ8: {
       auto *layered = static_cast<LayeredIndex *>(index);
       layered->InsertVectors(new_vector, static_cast<int64_t>(id));
+      break;
+    }
+    case IndexFactory::IndexType::GARDEN_HNSW: {
+      auto *garden = static_cast<GardenIndex *>(index);
+      std::map<std::string, int64_t> int_fields;
+      std::map<std::string, std::string> str_fields;
+      for (auto it = data.MemberBegin(); it != data.MemberEnd(); ++it) {
+        std::string fname = it->name.GetString();
+        if (fname == "vectors" || fname == "id") continue;
+        if (it->value.IsInt64()) int_fields[fname] = it->value.GetInt64();
+        else if (it->value.IsString()) str_fields[fname] = it->value.GetString();
+      }
+      for (auto& [fn, fv] : str_fields) {
+        if (!garden->HasDiscreteSubgraph(fn)) garden->RegisterDiscreteField(fn);
+      }
+      garden->Insert(new_vector, static_cast<int64_t>(id), int_fields, str_fields);
       break;
     }
     default:
@@ -335,6 +357,11 @@ void VectorDatabase::BatchUpsert(const std::string& collection_name,
         layered->RemoveVectors(old_ids_to_remove);
         break;
       }
+      case IndexFactory::IndexType::GARDEN_HNSW: {
+        auto* garden = static_cast<GardenIndex*>(index);
+        garden->RemoveVectors(old_ids_to_remove);
+        break;
+      }
       default:
         break;
     }
@@ -379,6 +406,25 @@ void VectorDatabase::BatchUpsert(const std::string& collection_name,
       case IndexFactory::IndexType::LAYERED_SQ8: {
         auto* layered = static_cast<LayeredIndex*>(index);
         layered->BatchInsertVectors(all_vectors, static_cast<int>(all_labels.size()), all_labels);
+        break;
+      }
+      case IndexFactory::IndexType::GARDEN_HNSW: {
+        auto* garden = static_cast<GardenIndex*>(index);
+        for (size_t i = 0; i < all_labels.size(); ++i) {
+          std::vector<float> vec(all_vectors.begin() + i * dim, all_vectors.begin() + (i + 1) * dim);
+          std::map<std::string, int64_t> int_fields;
+          std::map<std::string, std::string> str_fields;
+          for (auto it = datas[i].MemberBegin(); it != datas[i].MemberEnd(); ++it) {
+            std::string fname = it->name.GetString();
+            if (fname == "vectors" || fname == "id") continue;
+            if (it->value.IsInt64()) int_fields[fname] = it->value.GetInt64();
+            else if (it->value.IsString()) str_fields[fname] = it->value.GetString();
+          }
+          for (auto& [fn, fv] : str_fields) {
+            if (!garden->HasDiscreteSubgraph(fn)) garden->RegisterDiscreteField(fn);
+          }
+          garden->Insert(vec, all_labels[i], int_fields, str_fields);
+        }
         break;
       }
       default:
@@ -486,7 +532,103 @@ auto VectorDatabase::Search(const std::string& collection_name, const rapidjson:
             index_type = IndexFactory::IndexType::LAYERED_FLAT;
         } else if (index_type_str == INDEX_TYPE_LAYERED_SQ8) {
             index_type = IndexFactory::IndexType::LAYERED_SQ8;
+        } else if (index_type_str == INDEX_TYPE_GARDEN_HNSW) {
+            index_type = IndexFactory::IndexType::GARDEN_HNSW;
         }
+    }
+
+    // ===== GARDEN_HNSW 独立路径：多子图 + Pruner/Grafter/Selector 分级 =====
+    if (index_type == IndexFactory::IndexType::GARDEN_HNSW) {
+        auto* garden = static_cast<GardenIndex*>(coll->GetIndex(index_type));
+        if (garden == nullptr) {
+            global_logger->error("Search: GARDEN_HNSW index not initialized for '{}'", collection_name);
+            return {{}, {}};
+        }
+
+        auto* filter_index = static_cast<FilterIndex*>(coll->GetIndex(IndexFactory::IndexType::FILTER));
+        std::vector<GardenFilter> garden_filters;
+
+        // 解析 filter 条件（支持 filters 数组和单 filter 对象）
+        auto parse_one_filter = [&](const rapidjson::Value& filter) {
+            if (!filter.IsObject() || !filter.HasMember("fieldName") ||
+                !filter.HasMember("op") || !filter.HasMember("value"))
+                return;
+            std::string field_name = filter["fieldName"].GetString();
+            std::string op_str = filter["op"].GetString();
+            FilterIndex::Operation op = ParseFilterOp(op_str);
+            std::string field_type = filter.HasMember("fieldType")
+                ? std::string(filter["fieldType"].GetString()) : "int";
+
+            roaring_bitmap_t* cond_bitmap = roaring_bitmap_create();
+            GardenFilter gf;
+            gf.field = field_name;
+
+            if (field_type == "string" && filter["value"].IsString()) {
+                std::string value = filter["value"].GetString();
+                filter_index->GetStringFieldFilterBitmap(field_name, op, value, cond_bitmap);
+                gf.discrete_values.push_back(value);
+            } else if (filter["value"].IsInt64()) {
+                int64_t value = filter["value"].GetInt64();
+                filter_index->GetIntFieldFilterBitmap(field_name, op, value, cond_bitmap);
+                if (op == FilterIndex::Operation::GREATER_EQUAL) {
+                    gf.has_range = true;
+                    gf.range_min = value;
+                } else if (op == FilterIndex::Operation::LESS_EQUAL) {
+                    gf.has_range = true;
+                    gf.range_max = value;
+                }
+            }
+
+            gf.bitmap = cond_bitmap;
+            gf.cardinality = roaring_bitmap_get_cardinality(cond_bitmap);
+            garden_filters.push_back(gf);
+        };
+
+        if (json_request.HasMember("filters") && json_request["filters"].IsArray()) {
+            for (const auto& f : json_request["filters"].GetArray()) {
+                parse_one_filter(f);
+            }
+        } else if (json_request.HasMember("filter") && json_request["filter"].IsObject()) {
+            parse_one_filter(json_request["filter"]);
+        }
+
+        // 全文搜索结果作为额外 Grafter 条件
+        if (json_request.HasMember(REQUEST_FULLTEXT) && json_request[REQUEST_FULLTEXT].IsObject()) {
+            const auto& ft = json_request[REQUEST_FULLTEXT];
+            if (ft.HasMember("field") && ft.HasMember("query")) {
+                auto [ft_ids, ft_scores] = coll->fulltext_index.Search(
+                    ft["field"].GetString(), ft["query"].GetString(), 10000);
+                roaring_bitmap_t* ft_bitmap = roaring_bitmap_create();
+                for (uint64_t ft_id : ft_ids) {
+                    roaring_bitmap_add(ft_bitmap, static_cast<uint32_t>(ft_id));
+                }
+                GardenFilter ft_filter;
+                ft_filter.field = "_fulltext";
+                ft_filter.bitmap = ft_bitmap;
+                ft_filter.cardinality = roaring_bitmap_get_cardinality(ft_bitmap);
+                garden_filters.push_back(ft_filter);
+            }
+        }
+
+        auto result = garden->Search(query, k, garden_filters, nullptr, 50);
+
+        // 清理临时 bitmap
+        for (auto& gf : garden_filters) {
+            if (gf.bitmap) {
+                roaring_bitmap_free(const_cast<roaring_bitmap_t*>(gf.bitmap));
+            }
+        }
+
+        // TTL 惰性过滤：GARDEN 独立路径提前 return，需在此过滤过期 ID
+        // （与下方通用路径 712-717 行的 TTL 过滤逻辑对齐）
+        for (size_t i = 0; i < result.first.size(); ++i) {
+            if (result.first[i] != -1 &&
+                coll->ttl_manager.IsExpired(static_cast<uint64_t>(result.first[i]))) {
+                result.first[i] = -1;
+            }
+        }
+
+        return result;
     }
 
     roaring_bitmap_t* filter_bitmap = nullptr;

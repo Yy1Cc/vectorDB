@@ -29,6 +29,7 @@ namespace vectordb {
 #define INDEX_TYPE_IP_SQ8 "IP_SQ8"   // 内积(余弦)+SQ8 量化索引
 #define INDEX_TYPE_LAYERED_FLAT "LAYERED_FLAT" // 分层存储 FLAT
 #define INDEX_TYPE_LAYERED_SQ8 "LAYERED_SQ8"   // 分层存储 SQ8
+#define INDEX_TYPE_GARDEN_HNSW "GARDEN_HNSW"   // GARDEN 标量过滤引擎
 #define REQUEST_FULLTEXT "fulltext"   // 全文搜索参数
 #define REQUEST_TTL "ttl"             // TTL 过期参数（秒）
 

@@ -8,6 +8,7 @@ add_library(
         inner_product_space.cpp
         layered_index.cpp
         fulltext_index.cpp
+        garden_index.cpp
         )
 
 set(ALL_OBJECT_FILES

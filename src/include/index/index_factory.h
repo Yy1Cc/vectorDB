@@ -20,6 +20,7 @@ public:
         IP_SQ8,  // 内积(余弦)+SQ8 量化
         LAYERED_FLAT, // 分层存储（streaming part + FLAT）
         LAYERED_SQ8,  // 分层存储（streaming part + SQ8）
+        GARDEN_HNSW,  // GARDEN 标量过滤引擎（多子图 + Pruner/Grafter/Selector）
         UNKNOWN = -1
     };
 

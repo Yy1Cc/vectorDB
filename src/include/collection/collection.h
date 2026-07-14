@@ -44,6 +44,7 @@ public:
         index_factory.Init(IndexFactory::IndexType::IP_SQ8, dim, num_data, IndexFactory::MetricType::IP);
         index_factory.Init(IndexFactory::IndexType::LAYERED_FLAT, dim, num_data);
         index_factory.Init(IndexFactory::IndexType::LAYERED_SQ8, dim, num_data);
+        index_factory.Init(IndexFactory::IndexType::GARDEN_HNSW, dim, num_data);
     }
 };
 

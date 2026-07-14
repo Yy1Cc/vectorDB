@@ -2,6 +2,7 @@
 #include "index/hnswlib_index.h"
 #include "index/filter_index.h"
 #include "index/layered_index.h"
+#include "index/garden_index.h"
 namespace vectordb {
 
 void IndexFactory::Init(IndexType type, int dim,  int num_data,MetricType metric) {
@@ -41,6 +42,9 @@ void IndexFactory::Init(IndexType type, int dim,  int num_data,MetricType metric
             index_map_[type] = new vectordb::LayeredIndex(base, dim, metric == MetricType::IP);
             break;
         }
+        case IndexType::GARDEN_HNSW: // GARDEN 标量过滤引擎
+            index_map_[type] = new vectordb::GardenIndex(dim, num_data, metric);
+            break;
         default:
             break;
     }
@@ -99,6 +103,8 @@ void IndexFactory::LoadIndex(const std::string& folder_path) { // 添加 loadInd
             static_cast<FaissIndex*>(index)->LoadIndex(file_path);
         } else if (index_type == IndexType::LAYERED_FLAT || index_type == IndexType::LAYERED_SQ8) { // 加载分层索引
             static_cast<LayeredIndex*>(index)->LoadIndex(file_path);
+        } else if (index_type == IndexType::GARDEN_HNSW) { // 加载 GARDEN 索引
+            static_cast<GardenIndex*>(index)->LoadIndex(file_path);
         }
     }
 }

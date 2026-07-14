@@ -1,0 +1,181 @@
+{
+  "server": "http://127.0.0.1:7781",
+  "timestamp": "2026-07-13 17:04:52",
+  "num_queries": 200,
+  "k": 100,
+  "index_types": [
+    "FLAT",
+    "HNSW",
+    "SQ8"
+  ],
+  "dims": [
+    128,
+    256,
+    768
+  ],
+  "performance": [
+    {
+      "index_type": "FLAT",
+      "dim": 128,
+      "num_vectors": 10000,
+      "insert_time_s": 6.082,
+      "insert_qps": 1644.0,
+      "serial_qps": 408.7,
+      "serial_p50_ms": 2.36,
+      "serial_p99_ms": 3.24,
+      "serial_recall": 1.0,
+      "concurrent_qps": 521.9,
+      "concurrent_p50_ms": 7.48,
+      "concurrent_p99_ms": 12.02,
+      "concurrency": 4
+    },
+    {
+      "index_type": "HNSW",
+      "dim": 128,
+      "num_vectors": 10000,
+      "insert_time_s": 25.25,
+      "insert_qps": 396.0,
+      "serial_qps": 334.1,
+      "serial_p50_ms": 2.95,
+      "serial_p99_ms": 3.54,
+      "serial_recall": 0.779,
+      "concurrent_qps": 488.2,
+      "concurrent_p50_ms": 7.92,
+      "concurrent_p99_ms": 12.96,
+      "concurrency": 4
+    },
+    {
+      "index_type": "SQ8",
+      "dim": 128,
+      "num_vectors": 10000,
+      "insert_time_s": 6.17,
+      "insert_qps": 1621.0,
+      "serial_qps": 230.2,
+      "serial_p50_ms": 4.29,
+      "serial_p99_ms": 5.05,
+      "serial_recall": 0.9269,
+      "concurrent_qps": 463.8,
+      "concurrent_p50_ms": 7.88,
+      "concurrent_p99_ms": 14.98,
+      "concurrency": 4
+    }
+  ],
+  "int_filter": [
+    {
+      "index_type": "FLAT",
+      "filters": {
+        "1%": {
+          "threshold": 100,
+          "qps": 121.1,
+          "p50_ms": 8.15,
+          "p99_ms": 10.48,
+          "filter_accuracy": 1.0
+        },
+        "50%": {
+          "threshold": 5000,
+          "qps": 130.0,
+          "p50_ms": 7.59,
+          "p99_ms": 8.55,
+          "filter_accuracy": 1.0
+        },
+        "99%": {
+          "threshold": 9900,
+          "qps": 431.5,
+          "p50_ms": 2.3,
+          "p99_ms": 2.6,
+          "filter_accuracy": 1.0
+        }
+      }
+    },
+    {
+      "index_type": "HNSW",
+      "filters": {
+        "1%": {
+          "threshold": 100,
+          "qps": 110.8,
+          "p50_ms": 9.07,
+          "p99_ms": 10.74,
+          "filter_accuracy": 1.0
+        },
+        "50%": {
+          "threshold": 5000,
+          "qps": 105.1,
+          "p50_ms": 9.54,
+          "p99_ms": 10.59,
+          "filter_accuracy": 1.0
+        },
+        "99%": {
+          "threshold": 9900,
+          "qps": 64.5,
+          "p50_ms": 15.12,
+          "p99_ms": 21.31,
+          "filter_accuracy": 1.0
+        }
+      }
+    },
+    {
+      "index_type": "SQ8",
+      "filters": {
+        "1%": {
+          "threshold": 100,
+          "qps": 99.1,
+          "p50_ms": 10.03,
+          "p99_ms": 13.53,
+          "filter_accuracy": 1.0
+        },
+        "50%": {
+          "threshold": 5000,
+          "qps": 110.6,
+          "p50_ms": 8.99,
+          "p99_ms": 11.47,
+          "filter_accuracy": 1.0
+        },
+        "99%": {
+          "threshold": 9900,
+          "qps": 368.2,
+          "p50_ms": 2.64,
+          "p99_ms": 3.62,
+          "filter_accuracy": 1.0
+        }
+      }
+    }
+  ],
+  "label_filter": [
+    {
+      "filters": {
+        "5%": {
+          "label": "label_5p",
+          "qps": 439.0,
+          "p50_ms": 2.25,
+          "p99_ms": 2.87
+        },
+        "20%": {
+          "label": "label_20p",
+          "qps": 410.2,
+          "p50_ms": 2.38,
+          "p99_ms": 3.26
+        }
+      }
+    }
+  ],
+  "multi_dim": {
+    "128": {
+      "dim": 128,
+      "num_vectors": 2000,
+      "search_results": 10,
+      "status": "pass"
+    },
+    "256": {
+      "dim": 256,
+      "num_vectors": 2000,
+      "search_results": 10,
+      "status": "pass"
+    },
+    "768": {
+      "dim": 768,
+      "num_vectors": 2000,
+      "search_results": 10,
+      "status": "pass"
+    }
+  }
+}
