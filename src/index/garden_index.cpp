@@ -267,8 +267,12 @@ auto GardenIndex::Search(const std::vector<float>& query, int k,
                          const roaring_bitmap_t* selector_bitmap,
                          int ef_search) -> std::pair<std::vector<int64_t>, std::vector<float>> {
     // ---- 无过滤条件：走全量图标准 HNSW ----
+    // 但有 selector 黑名单时，全量图无法表达黑名单语义，走暴力检索兜底
     if (filters.empty()) {
         global_logger->debug("GardenIndex: no filter, full graph search");
+        if (selector_bitmap != nullptr) {
+            return BruteForceSearch(query, k, nullptr, selector_bitmap);
+        }
         return full_index_->SearchVectors(query, k, nullptr, ef_search);
     }
 
@@ -370,15 +374,18 @@ auto GardenIndex::Search(const std::vector<float>& query, int k,
     // 策略 2: 选择性很高 (> kFullSearchRate) → 全量图 + bitmap IDSelector
     if (overall_selectivity > kFullSearchRate || !has_pruner) {
         global_logger->debug("GardenIndex: full graph + bitmap (selectivity={:.4f})", overall_selectivity);
-        // 合并 grafter + selector 为最终过滤 bitmap
+        // 构造白名单 bitmap：grafter 减去 selector 黑名单（ANDNOT，非 AND）
+        // selector 是黑名单（结果排除），grafter 是白名单（结果需在内）
         roaring_bitmap_t* combined = nullptr;
         if (grafter_bitmap != nullptr) {
             combined = roaring_bitmap_copy(grafter_bitmap);
             if (selector_bitmap != nullptr) {
-                roaring_bitmap_and_inplace(combined, selector_bitmap);
+                roaring_bitmap_andnot_inplace(combined, selector_bitmap);
             }
         } else if (selector_bitmap != nullptr) {
-            combined = roaring_bitmap_copy(selector_bitmap);
+            // 无 grafter 只有 selector：全量图无法表达纯黑名单，走暴力检索兜底
+            if (grafter_bitmap) roaring_bitmap_free(grafter_bitmap);
+            return BruteForceSearch(query, k, nullptr, selector_bitmap);
         }
         // 增大 ef 补偿低选择性（ACORN 退化）
         int adjusted_ef = std::max(ef_search, static_cast<int>(k * 10));
@@ -513,15 +520,16 @@ auto GardenIndex::MultiEntrySearch(const std::vector<float>& query, int k,
                                    const roaring_bitmap_t* selector_bitmap,
                                    int ef_search)
     -> std::pair<std::vector<int64_t>, std::vector<float>> {
-    // 合并 grafter + selector 为最终过滤 bitmap
+    // 构造白名单 bitmap：grafter 减去 selector 黑名单（ANDNOT，非 AND）
     roaring_bitmap_t* combined_filter = nullptr;
     if (grafter_bitmap != nullptr) {
         combined_filter = roaring_bitmap_copy(grafter_bitmap);
         if (selector_bitmap != nullptr) {
-            roaring_bitmap_and_inplace(combined_filter, selector_bitmap);
+            roaring_bitmap_andnot_inplace(combined_filter, selector_bitmap);
         }
     } else if (selector_bitmap != nullptr) {
-        combined_filter = roaring_bitmap_copy(selector_bitmap);
+        // 无 grafter 只有 selector：子图搜索无法表达纯黑名单，走暴力检索兜底
+        return BruteForceSearch(query, k, nullptr, selector_bitmap);
     }
 
     // 每个 Pruner 子图搜索 top-k，合并到共享候选池

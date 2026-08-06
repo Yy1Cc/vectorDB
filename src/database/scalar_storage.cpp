@@ -124,7 +124,7 @@ ScalarStorage::ScalarStorage(const std::string& db_path) {
     vector_cf_handle_  = handles[2];
 
     global_logger->info("ScalarStorage opened with 3 CFs (default/scalar/vector), "
-                         "bloom filter + ZSTD compression + BlobDB + 512MB block cache");
+                         "bloom filter + LZ4 compression + BlobDB + 512MB block cache");
 }
 
 ScalarStorage::~ScalarStorage() {

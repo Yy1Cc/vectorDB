@@ -39,6 +39,12 @@ class AdminServiceImpl : public nvm::AdminService, public BaseServiceImpl {
   void getCollectionInfo(::google::protobuf::RpcController *controller, const ::nvm::HttpRequest * /*request*/,
                          ::nvm::HttpResponse * /*response*/, ::google::protobuf::Closure *done) override;
 
+  // 注册 GARDEN 引擎的过滤字段（离散或连续）
+  // 离散字段：fieldType="discrete"，仅需 field
+  // 连续字段：fieldType="continuous"，需 field + min + max + 可选 bucketSize
+  void registerGardenField(::google::protobuf::RpcController *controller, const ::nvm::HttpRequest * /*request*/,
+                           ::nvm::HttpResponse * /*response*/, ::google::protobuf::Closure *done) override;
+
  private:
   VectorDatabase *vector_database_ = nullptr;
   RaftStuff *raft_stuff_ = nullptr;

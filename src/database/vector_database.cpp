@@ -537,11 +537,23 @@ auto VectorDatabase::Search(const std::string& collection_name, const rapidjson:
         }
     }
 
+    // 解析 excludeIds 黑名单（Selector 角色）：GARDEN 路径作 selector_bitmap，通用路径做后过滤
+    roaring_bitmap_t* exclude_bitmap = nullptr;
+    if (json_request.HasMember(REQUEST_EXCLUDE_IDS) && json_request[REQUEST_EXCLUDE_IDS].IsArray()) {
+        exclude_bitmap = roaring_bitmap_create();
+        for (const auto& v : json_request[REQUEST_EXCLUDE_IDS].GetArray()) {
+            if (v.IsUint64()) {
+                roaring_bitmap_add(exclude_bitmap, static_cast<uint32_t>(v.GetUint64()));
+            }
+        }
+    }
+
     // ===== GARDEN_HNSW 独立路径：多子图 + Pruner/Grafter/Selector 分级 =====
     if (index_type == IndexFactory::IndexType::GARDEN_HNSW) {
         auto* garden = static_cast<GardenIndex*>(coll->GetIndex(index_type));
         if (garden == nullptr) {
             global_logger->error("Search: GARDEN_HNSW index not initialized for '{}'", collection_name);
+            if (exclude_bitmap != nullptr) roaring_bitmap_free(exclude_bitmap);
             return {{}, {}};
         }
 
@@ -550,11 +562,13 @@ auto VectorDatabase::Search(const std::string& collection_name, const rapidjson:
 
         // 解析 filter 条件（支持 filters 数组和单 filter 对象）
         auto parse_one_filter = [&](const rapidjson::Value& filter) {
-            if (!filter.IsObject() || !filter.HasMember("fieldName") ||
-                !filter.HasMember("op") || !filter.HasMember("value"))
+            if (!filter.IsObject() || !filter.HasMember("fieldName") || !filter.HasMember("op"))
+                return;
+            std::string op_str = filter["op"].GetString();
+            // range op 用 min/max，其它 op 用 value
+            if (op_str != "range" && !filter.HasMember("value"))
                 return;
             std::string field_name = filter["fieldName"].GetString();
-            std::string op_str = filter["op"].GetString();
             FilterIndex::Operation op = ParseFilterOp(op_str);
             std::string field_type = filter.HasMember("fieldType")
                 ? std::string(filter["fieldType"].GetString()) : "int";
@@ -567,14 +581,33 @@ auto VectorDatabase::Search(const std::string& collection_name, const rapidjson:
                 std::string value = filter["value"].GetString();
                 filter_index->GetStringFieldFilterBitmap(field_name, op, value, cond_bitmap);
                 gf.discrete_values.push_back(value);
+            } else if (op_str == "range" && filter.HasMember("min") && filter.HasMember("max")) {
+                // 区间查询：min <= field <= max，bitmap = (>=min) AND (<=max)
+                int64_t range_min = filter["min"].GetInt64();
+                int64_t range_max = filter["max"].GetInt64();
+                roaring_bitmap_t* ge_bm = roaring_bitmap_create();
+                filter_index->GetIntFieldFilterBitmap(field_name, FilterIndex::Operation::GREATER_EQUAL,
+                                                      range_min, ge_bm);
+                filter_index->GetIntFieldFilterBitmap(field_name, FilterIndex::Operation::LESS_EQUAL,
+                                                      range_max, cond_bitmap);
+                roaring_bitmap_and_inplace(cond_bitmap, ge_bm);
+                roaring_bitmap_free(ge_bm);
+                gf.has_range = true;
+                gf.range_min = range_min;
+                gf.range_max = range_max;
             } else if (filter["value"].IsInt64()) {
                 int64_t value = filter["value"].GetInt64();
                 filter_index->GetIntFieldFilterBitmap(field_name, op, value, cond_bitmap);
-                if (op == FilterIndex::Operation::GREATER_EQUAL) {
+                // 单边条件补全 range 另一端，避免 GARDEN 连续 Pruner 桶收集退化
+                if (op == FilterIndex::Operation::GREATER_EQUAL ||
+                    op == FilterIndex::Operation::GREATER_THAN) {
                     gf.has_range = true;
                     gf.range_min = value;
-                } else if (op == FilterIndex::Operation::LESS_EQUAL) {
+                    gf.range_max = INT64_MAX;
+                } else if (op == FilterIndex::Operation::LESS_EQUAL ||
+                           op == FilterIndex::Operation::LESS_THAN) {
                     gf.has_range = true;
+                    gf.range_min = INT64_MIN;
                     gf.range_max = value;
                 }
             }
@@ -610,13 +643,16 @@ auto VectorDatabase::Search(const std::string& collection_name, const rapidjson:
             }
         }
 
-        auto result = garden->Search(query, k, garden_filters, nullptr, 50);
+        auto result = garden->Search(query, k, garden_filters, exclude_bitmap, 50);
 
         // 清理临时 bitmap
         for (auto& gf : garden_filters) {
             if (gf.bitmap) {
                 roaring_bitmap_free(const_cast<roaring_bitmap_t*>(gf.bitmap));
             }
+        }
+        if (exclude_bitmap != nullptr) {
+            roaring_bitmap_free(exclude_bitmap);
         }
 
         // TTL 惰性过滤：GARDEN 独立路径提前 return，需在此过滤过期 ID
@@ -639,11 +675,13 @@ auto VectorDatabase::Search(const std::string& collection_name, const rapidjson:
         const auto& filters = json_request["filters"].GetArray();
         for (rapidjson::SizeType fi = 0; fi < filters.Size(); ++fi) {
             const auto& filter = filters[fi];
-            if (!filter.IsObject() || !filter.HasMember("fieldName") || !filter.HasMember("op") || !filter.HasMember("value"))
+            if (!filter.IsObject() || !filter.HasMember("fieldName") || !filter.HasMember("op"))
                 continue;
-
             std::string field_name = filter["fieldName"].GetString();
             std::string op_str = filter["op"].GetString();
+            if (op_str != "range" && !filter.HasMember("value"))
+                continue;
+
             FilterIndex::Operation op = ParseFilterOp(op_str);
 
             roaring_bitmap_t* condition_bitmap = roaring_bitmap_create();
@@ -652,6 +690,14 @@ auto VectorDatabase::Search(const std::string& collection_name, const rapidjson:
             if (field_type == "string" && filter["value"].IsString()) {
                 std::string value = filter["value"].GetString();
                 filter_index->GetStringFieldFilterBitmap(field_name, op, value, condition_bitmap);
+            } else if (op_str == "range" && filter.HasMember("min") && filter.HasMember("max")) {
+                int64_t range_min = filter["min"].GetInt64();
+                int64_t range_max = filter["max"].GetInt64();
+                roaring_bitmap_t* ge_bm = roaring_bitmap_create();
+                filter_index->GetIntFieldFilterBitmap(field_name, FilterIndex::Operation::GREATER_EQUAL, range_min, ge_bm);
+                filter_index->GetIntFieldFilterBitmap(field_name, FilterIndex::Operation::LESS_EQUAL, range_max, condition_bitmap);
+                roaring_bitmap_and_inplace(condition_bitmap, ge_bm);
+                roaring_bitmap_free(ge_bm);
             } else if (filter["value"].IsInt64()) {
                 int64_t value = filter["value"].GetInt64();
                 filter_index->GetIntFieldFilterBitmap(field_name, op, value, condition_bitmap);
@@ -671,7 +717,15 @@ auto VectorDatabase::Search(const std::string& collection_name, const rapidjson:
         FilterIndex::Operation op = ParseFilterOp(op_str);
 
         filter_bitmap = roaring_bitmap_create();
-        if (filter["value"].IsString()) {
+        if (op_str == "range" && filter.HasMember("min") && filter.HasMember("max")) {
+            int64_t range_min = filter["min"].GetInt64();
+            int64_t range_max = filter["max"].GetInt64();
+            roaring_bitmap_t* ge_bm = roaring_bitmap_create();
+            filter_index->GetIntFieldFilterBitmap(field_name, FilterIndex::Operation::GREATER_EQUAL, range_min, ge_bm);
+            filter_index->GetIntFieldFilterBitmap(field_name, FilterIndex::Operation::LESS_EQUAL, range_max, filter_bitmap);
+            roaring_bitmap_and_inplace(filter_bitmap, ge_bm);
+            roaring_bitmap_free(ge_bm);
+        } else if (filter["value"].IsString()) {
             std::string value = filter["value"].GetString();
             filter_index->GetStringFieldFilterBitmap(field_name, op, value, filter_bitmap);
         } else {
@@ -734,6 +788,17 @@ auto VectorDatabase::Search(const std::string& collection_name, const rapidjson:
         if (results.first[i] != -1 && coll->ttl_manager.IsExpired(static_cast<uint64_t>(results.first[i]))) {
             results.first[i] = -1;
         }
+    }
+
+    // excludeIds 黑名单后过滤（通用路径无 selector_bitmap 参数，后过滤移除）
+    if (exclude_bitmap != nullptr) {
+        for (size_t i = 0; i < results.first.size(); ++i) {
+            if (results.first[i] != -1 &&
+                roaring_bitmap_contains(exclude_bitmap, static_cast<uint32_t>(results.first[i]))) {
+                results.first[i] = -1;
+            }
+        }
+        roaring_bitmap_free(exclude_bitmap);
     }
 
     return results;

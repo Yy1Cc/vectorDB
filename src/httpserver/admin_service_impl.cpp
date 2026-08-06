@@ -9,6 +9,7 @@
 #include "common/constants.h"
 #include "collection/collection_manager.h"
 #include "index/faiss_index.h"
+#include "index/garden_index.h"
 #include "index/hnswlib_index.h"
 #include "index/index_factory.h"
 #include "logger/logger.h"
@@ -294,6 +295,93 @@ void AdminServiceImpl::getCollectionInfo(::google::protobuf::RpcController *cont
     json_response.AddMember(RESPONSE_RETCODE, RESPONSE_RETCODE_ERROR, allocator);
     json_response.AddMember(RESPONSE_ERROR_MSG, rapidjson::Value("Collection not found", allocator), allocator);
   }
+  SetJsonResponse(json_response, cntl);
+}
+
+void AdminServiceImpl::registerGardenField(::google::protobuf::RpcController *controller,
+                                           const ::nvm::HttpRequest * /*request*/,
+                                           ::nvm::HttpResponse * /*response*/,
+                                           ::google::protobuf::Closure *done) {
+  global_logger->debug("Received registerGardenField request");
+  brpc::ClosureGuard done_guard(done);
+  auto *cntl = static_cast<brpc::Controller *>(controller);
+
+  rapidjson::Document json_request;
+  json_request.Parse(cntl->request_attachment().to_string().c_str());
+
+  if (!json_request.IsObject()) {
+    cntl->http_response().set_status_code(400);
+    SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Invalid JSON request");
+    return;
+  }
+
+  // 必填字段：collectionName / field / fieldType
+  if (!json_request.HasMember("collectionName") || !json_request.HasMember("field") ||
+      !json_request.HasMember("fieldType")) {
+    cntl->http_response().set_status_code(400);
+    SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Missing collectionName / field / fieldType");
+    return;
+  }
+
+  std::string collection_name = json_request["collectionName"].GetString();
+  std::string field = json_request["field"].GetString();
+  std::string field_type = json_request["fieldType"].GetString();
+
+  auto *coll = CollectionManager::Instance().GetCollection(collection_name);
+  if (coll == nullptr) {
+    cntl->http_response().set_status_code(400);
+    SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Collection not found");
+    return;
+  }
+
+  auto *garden = static_cast<GardenIndex *>(coll->GetIndex(IndexFactory::IndexType::GARDEN_HNSW));
+  if (garden == nullptr) {
+    cntl->http_response().set_status_code(400);
+    SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "GARDEN_HNSW index not initialized");
+    return;
+  }
+
+  rapidjson::Document json_response;
+  json_response.SetObject();
+  rapidjson::Document::AllocatorType &allocator = json_response.GetAllocator();
+
+  if (field_type == "discrete") {
+    // 离散字段：仅注册字段名，子图在 upsert 时按值懒创建
+    garden->RegisterDiscreteField(field);
+    json_response.AddMember(RESPONSE_RETCODE, RESPONSE_RETCODE_SUCCESS, allocator);
+    json_response.AddMember("fieldType", rapidjson::Value("discrete", allocator), allocator);
+    global_logger->info("registerGardenField: discrete field '{}' on collection '{}'", field, collection_name);
+  } else if (field_type == "continuous") {
+    // 连续字段：必须提供 min / max，bucketSize 可选（默认 kBruteBound）
+    if (!json_request.HasMember("min") || !json_request.HasMember("max")) {
+      cntl->http_response().set_status_code(400);
+      SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Continuous field requires min and max");
+      return;
+    }
+    int64_t min_val = json_request["min"].GetInt64();
+    int64_t max_val = json_request["max"].GetInt64();
+    int bucket_size = GardenIndex::kBruteBound;
+    if (json_request.HasMember("bucketSize") && json_request["bucketSize"].IsInt()) {
+      bucket_size = json_request["bucketSize"].GetInt();
+    }
+
+    if (min_val >= max_val || bucket_size <= 0) {
+      cntl->http_response().set_status_code(400);
+      SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Invalid range or bucketSize");
+      return;
+    }
+
+    garden->RegisterContinuousField(field, min_val, max_val, bucket_size);
+    json_response.AddMember(RESPONSE_RETCODE, RESPONSE_RETCODE_SUCCESS, allocator);
+    json_response.AddMember("fieldType", rapidjson::Value("continuous", allocator), allocator);
+    global_logger->info("registerGardenField: continuous field '{}' on '{}' range=[{},{}] bucket={}",
+                        field, collection_name, min_val, max_val, bucket_size);
+  } else {
+    cntl->http_response().set_status_code(400);
+    SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "fieldType must be 'discrete' or 'continuous'");
+    return;
+  }
+
   SetJsonResponse(json_response, cntl);
 }
 

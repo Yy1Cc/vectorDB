@@ -41,5 +41,6 @@ rpc createCollection(HttpRequest) returns (HttpResponse);
 rpc dropCollection(HttpRequest) returns (HttpResponse);
 rpc listCollections(HttpRequest) returns (HttpResponse);
 rpc getCollectionInfo(HttpRequest) returns (HttpResponse);
+rpc registerGardenField(HttpRequest) returns (HttpResponse);
 };
 

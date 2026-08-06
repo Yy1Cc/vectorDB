@@ -39,6 +39,7 @@ namespace vectordb {
 
 #define REQUEST_COLLECTION_NAME "collectionName" // Collection 名称字段
 #define DEFAULT_COLLECTION_NAME "default" // 默认 Collection 名称
+#define REQUEST_EXCLUDE_IDS "excludeIds"   // 搜索黑名单 ID 数组（Selector 角色）
 
 // 其他字符串常量...
 }  // namespace vectordb
