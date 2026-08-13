@@ -147,16 +147,15 @@ function build_rapidjson() {
     local REPO_URL="https://github.com/Tencent/rapidjson.git"
     local DIR=rapidjson
 
-    # 检查是否已经 clone 仓库，如果没有则执行 clone
+    # 检查是否已经存在，如果没有则用 codeload tar.gz 下载（避免 git clone 被网络代理拦截）
     if [ ! -d "${TP_SOURCE_DIR}/${DIR}" ]; then
-        git clone ${REPO_URL} ${TP_SOURCE_DIR}/${DIR}
+        wget -q https://codeload.github.com/Tencent/rapidjson/tar.gz/refs/heads/master -O /tmp/rapidjson.tar.gz
+        mkdir -p ${TP_SOURCE_DIR}/${DIR}
+        tar -xzf /tmp/rapidjson.tar.gz --strip-components=1 -C ${TP_SOURCE_DIR}/${DIR}
+        rm -f /tmp/rapidjson.tar.gz
     fi
 
     cd ${TP_SOURCE_DIR}/${DIR}
-
-    # 如果已经 clone，确保拉取最新的代码
-    git fetch --all
-    git pull origin $(git rev-parse --abbrev-ref HEAD)
 
     # 配置和安装
     cmake -B build . -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" \
@@ -489,11 +488,16 @@ function build_nuraft() {
     [ -d ${TP_SOURCE_DIR}/${DIR} ] || tar xvf ${TP_SOURCE_DIR}/${FILE} -C ${TP_SOURCE_DIR}
     cd ${TP_SOURCE_DIR}/${DIR}
     rm -rf asio
-    git clone https://github.com/chriskohlhoff/asio -b asio-1-24-0
-    cmake -B build .  -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" 
+    wget -q https://codeload.github.com/chriskohlhoff/asio/tar.gz/refs/tags/asio-1-24-0 -O /tmp/asio.tar.gz
+    mkdir -p asio
+    tar -xzf /tmp/asio.tar.gz --strip-components=1 -C asio
+    rm -f /tmp/asio.tar.gz
+    cmake -B build .  -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" -DCMAKE_CXX_FLAGS="-include cstdint"
     make -C build -j ${PARALLEL} install
     cp src/event_awaiter.h ${TP_INCLUDE_DIR}/libnuraft
     cp examples/backtrace.h ${TP_INCLUDE_DIR}/libnuraft
+    # GCC 13 严格模式：NuRaft 头文件用 uint32_t/uint64_t 未 include cstdint，安装后补丁
+    sed -i '1i #include <cstdint>' ${TP_INCLUDE_DIR}/libnuraft/asio_service_options.hxx
 }
 
 function build_curl() {
@@ -550,7 +554,6 @@ PACKAGES=(
     "backward"
     "nuraft"
     "curl"
-    "etcdclient"
 )
 
 function build() {

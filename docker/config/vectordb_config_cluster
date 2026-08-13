@@ -1,0 +1,49 @@
+{
+    "CLUSTER_INFO" :[
+        {
+            "RAFT":{
+                "NODE_ID":1,
+                "ENDPOINT":"vdb-node-1:8081",
+                "PORT":8081
+            },
+            "ROCKS_DB_PATH" : "/var/lib/vectordb/node-1/storage",
+            "WAL_PATH" : "/var/lib/vectordb/node-1/wal/wal.log",
+            "SNAP_PATH" : "/var/lib/vectordb/node-1/snap/",
+            "ADDRESS" : "0.0.0.0",
+            "PORT" : 7781
+        },
+        {
+            "RAFT":{
+                "NODE_ID":2,
+                "ENDPOINT":"vdb-node-2:8082",
+                "PORT":8082
+            },
+            "ROCKS_DB_PATH" : "/var/lib/vectordb/node-2/storage",
+            "WAL_PATH" : "/var/lib/vectordb/node-2/wal/wal.log",
+            "SNAP_PATH" : "/var/lib/vectordb/node-2/snap/",
+            "ADDRESS" : "0.0.0.0",
+            "PORT" : 7782
+        },
+        {
+            "RAFT":{
+                "NODE_ID":3,
+                "ENDPOINT":"vdb-node-3:8083",
+                "PORT":8083
+            },
+            "ROCKS_DB_PATH" : "/var/lib/vectordb/node-3/storage",
+            "WAL_PATH" : "/var/lib/vectordb/node-3/wal/wal.log",
+            "SNAP_PATH" : "/var/lib/vectordb/node-3/snap/",
+            "ADDRESS" : "0.0.0.0",
+            "PORT" : 7783
+        }
+    ],
+    "LOG":{
+        "LOG_NAME" : "vectordb",
+        "LOG_LEVEL" : 1
+    },
+    "TEST_ROCKS_DB_PATH" : "/var/lib/vectordb/test/storage",
+    "TEST_WAL_PATH" : "/var/lib/vectordb/test/wal/wal.log",
+    "TEST_SNAP_PATH" : "/var/lib/vectordb/test/snap/",
+    "DIM": 128,
+    "NUM_DATA": 1000000
+}

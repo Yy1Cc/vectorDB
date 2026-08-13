@@ -1,0 +1,93 @@
+services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.15
+    command:
+      - etcd
+      - --name=etcd
+      - --advertise-client-urls=http://etcd:2379
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --data-dir=/etcd-data
+    volumes:
+      - etcd-data:/etcd-data
+    networks:
+      - vectordb-net
+    restart: unless-stopped
+
+  master:
+    image: vectordb:dev
+    entrypoint: ["vectordb-entrypoint", "vdb_server_master"]
+    volumes:
+      - ./docker/config/master_config:/opt/vectordb/master_config:ro
+      - master-data:/var/lib/vectordb
+    ports:
+      - "6060:6060"
+    networks:
+      - vectordb-net
+    depends_on:
+      - etcd
+    restart: unless-stopped
+
+  proxy:
+    image: vectordb:dev
+    entrypoint: ["vectordb-entrypoint", "vdb_server_proxy"]
+    volumes:
+      - ./docker/config/proxy_config:/opt/vectordb/proxy_config:ro
+      - proxy-data:/var/lib/vectordb
+    ports:
+      - "6061:6061"
+    networks:
+      - vectordb-net
+    depends_on:
+      - master
+    restart: unless-stopped
+
+  vdb-node-1:
+    image: vectordb:dev
+    entrypoint: ["vectordb-entrypoint", "vdb_server", "1"]
+    working_dir: /var/lib/vectordb
+    volumes:
+      - ./docker/config/vectordb_config_cluster:/opt/vectordb/vectordb_config:ro
+      - vdb-node1-data:/var/lib/vectordb
+    ports:
+      - "7781:7781"
+    networks:
+      - vectordb-net
+    restart: unless-stopped
+
+  vdb-node-2:
+    image: vectordb:dev
+    entrypoint: ["vectordb-entrypoint", "vdb_server", "2"]
+    working_dir: /var/lib/vectordb
+    volumes:
+      - ./docker/config/vectordb_config_cluster:/opt/vectordb/vectordb_config:ro
+      - vdb-node2-data:/var/lib/vectordb
+    ports:
+      - "7782:7782"
+    networks:
+      - vectordb-net
+    restart: unless-stopped
+
+  vdb-node-3:
+    image: vectordb:dev
+    entrypoint: ["vectordb-entrypoint", "vdb_server", "3"]
+    working_dir: /var/lib/vectordb
+    volumes:
+      - ./docker/config/vectordb_config_cluster:/opt/vectordb/vectordb_config:ro
+      - vdb-node3-data:/var/lib/vectordb
+    ports:
+      - "7783:7783"
+    networks:
+      - vectordb-net
+    restart: unless-stopped
+
+networks:
+  vectordb-net:
+    driver: bridge
+
+volumes:
+  etcd-data:
+  master-data:
+  proxy-data:
+  vdb-node1-data:
+  vdb-node2-data:
+  vdb-node3-data:

@@ -1,0 +1,10 @@
+.git
+.codebuddy
+build
+third_party/installed
+third_party/src
+**/*.o
+**/*.a
+**/*.so
+**/*.so.*
+*.svg

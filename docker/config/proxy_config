@@ -1,0 +1,13 @@
+{
+    "INSTANCE_ID" : 1,
+    "PROXY_ADDRESS" : "0.0.0.0",
+    "PROXY_PORT" : 6061,
+    "MASTER_HOST" : "master",
+    "MASTER_PORT" : 6060,
+    "READ_PATHS" :[ "/UserService/search"],
+    "WRITE_PATHS" :[ "/UserService/upsert"],
+    "LOG":{
+        "LOG_NAME" : "vectordb-proxy",
+        "LOG_LEVEL" : 1
+    }
+}

@@ -1,0 +1,9 @@
+{
+    "MASTER_HOST" : "0.0.0.0",
+    "MASTER_PORT" : 6060,
+    "ETCD_ENDPOINTS" : "http://etcd:2379",
+    "LOG":{
+        "LOG_NAME" : "vectordb-master",
+        "LOG_LEVEL" : 1
+    }
+}
