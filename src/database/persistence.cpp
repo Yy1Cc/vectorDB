@@ -1,4 +1,5 @@
 #include "database/persistence.h"
+#include <chrono>
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
@@ -157,7 +158,10 @@ void Persistence::TakeSnapshot() {
 }
 
 void Persistence::TakeSnapshot(uint64_t snapshot_log_id) {
-  global_logger->debug("Taking snapshot at log id {}", snapshot_log_id);
+  // 快照在 NuRaft 的 commit 线程上同步执行，期间 sm_commit_index_ 不推进、
+  // 客户端写入被挂起。耗时日志是观测"停摆时长"的直接手段，必须有。
+  const auto t0 = std::chrono::steady_clock::now();
+  global_logger->info("TakeSnapshot begin at log id {}", snapshot_log_id);
 
   last_snapshot_id_ = snapshot_log_id;
   std::string snapshot_folder_path = Cfg::Instance().SnapPath();
@@ -166,11 +170,22 @@ void Persistence::TakeSnapshot(uint64_t snapshot_log_id) {
   for (const auto& name : names) {
     auto* coll = CollectionManager::Instance().GetCollection(name);
     if (coll != nullptr) {
+      const auto c0 = std::chrono::steady_clock::now();
       std::string coll_path = snapshot_folder_path + name + "_";
       coll->index_factory.SaveIndex(coll_path);
+      const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - c0)
+                          .count();
+      global_logger->info("TakeSnapshot: collection '{}' saved in {} ms", name, ms);
     }
   }
   SaveLastSnapshotId(snapshot_folder_path);
+
+  const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - t0)
+                            .count();
+  global_logger->info("TakeSnapshot end at log id {}, {} collections, {} ms total", snapshot_log_id,
+                      names.size(), total_ms);
 }
 
 void Persistence::LoadSnapshot() {

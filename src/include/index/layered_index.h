@@ -62,6 +62,18 @@ public:
     void Flush(); // 把 streaming part 刷入 base index
     size_t StreamingSize() const { return streaming_part_->Size(); }
 
+    // 向量总数 = base index + streaming part。用于负载上报与快照剪枝。
+    auto GetTotalCount() const -> int64_t {
+        int64_t total = 0;
+        if (base_index_ != nullptr) {
+            total += base_index_->GetTotalCount();
+        }
+        if (streaming_part_ != nullptr) {
+            total += static_cast<int64_t>(streaming_part_->Size());
+        }
+        return total;
+    }
+
 private:
     FaissIndex* base_index_;
     int dim_;

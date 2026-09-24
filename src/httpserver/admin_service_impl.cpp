@@ -266,12 +266,13 @@ void AdminServiceImpl::ListNode(::google::protobuf::RpcController *controller, c
   rapidjson::Value nodes_array(rapidjson::kArrayType);
   for (const auto &node_info : nodes_info) {
     rapidjson::Value node_object(rapidjson::kObjectType);
-    node_object.AddMember("nodeId", std::get<0>(node_info), allocator);
-    node_object.AddMember("endpoint", rapidjson::Value(std::get<1>(node_info).c_str(), allocator), allocator);
-    node_object.AddMember("state", rapidjson::Value(std::get<2>(node_info).c_str(), allocator),
-                          allocator);                                               // 添加节点状态
-    node_object.AddMember("last_log_idx", std::get<3>(node_info), allocator);       // 添加节点最后日志索引
-    node_object.AddMember("last_succ_resp_us", std::get<4>(node_info), allocator);  // 添加节点最后成功响应时间
+    node_object.AddMember("nodeId", node_info.node_id, allocator);
+    node_object.AddMember("endpoint", rapidjson::Value(node_info.endpoint.c_str(), allocator), allocator);
+    node_object.AddMember("state", rapidjson::Value(node_info.role.c_str(), allocator), allocator);
+    // learner 不计入法定人数、也不发起选举。Master 据此判定谁需要自动转正。
+    node_object.AddMember("learner", node_info.is_learner, allocator);
+    node_object.AddMember("last_log_idx", node_info.last_log_idx, allocator);
+    node_object.AddMember("last_succ_resp_us", node_info.last_succ_resp_us, allocator);
     nodes_array.PushBack(node_object, allocator);
   }
   json_response.AddMember("nodes", nodes_array, allocator);

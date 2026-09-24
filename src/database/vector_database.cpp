@@ -244,6 +244,11 @@ void VectorDatabase::Upsert(const std::string& collection_name, uint64_t id, con
       break;
   }
 
+  // 标记该索引类型已被写入：快照只持久化被写入过的类型。
+  // 漏标会导致该索引不落盘，而对应 Raft 日志可能已被 compact —— 数据丢失。
+  coll->index_factory.MarkUsed(index_type);
+  coll->index_factory.MarkUsed(IndexFactory::IndexType::FILTER);
+
   global_logger->debug("try add new filter");
   auto *filter_index = static_cast<FilterIndex *>(coll->GetIndex(IndexFactory::IndexType::FILTER));
   for (auto it = data.MemberBegin(); it != data.MemberEnd(); ++it) {
@@ -431,6 +436,11 @@ void VectorDatabase::BatchUpsert(const std::string& collection_name,
         break;
     }
   }
+
+  // 标记该索引类型已被写入：快照只持久化被写入过的类型。
+  // 漏标会导致该索引不落盘，而对应 Raft 日志可能已被 compact —— 数据丢失。
+  coll->index_factory.MarkUsed(index_type);
+  coll->index_factory.MarkUsed(IndexFactory::IndexType::FILTER);
 
   // 4. 更新 FilterIndex
   auto* filter_index = static_cast<FilterIndex*>(coll->GetIndex(IndexFactory::IndexType::FILTER));

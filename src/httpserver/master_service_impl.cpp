@@ -65,6 +65,49 @@ auto HasCaughtUp(uint64_t node_log_idx, uint64_t leader_log_idx) -> bool {
   return (leader_log_idx - node_log_idx) <= kMaxLogLagForReady;
 }
 
+// 请求 leader 把指定 learner 提升为正式成员。
+// learner 不计入法定人数、也不发起选举（NuRaft handle_timeout.cxx:280），
+// 若只加入不转正，扩容不会带来任何容错能力。
+// 追平校验在 leader 侧 PromoteLearner RPC 内部有实时把关，此处只做粗筛。
+auto PromoteLearnerOnLeader(const std::string &leader_url, uint64_t node_id) -> bool {
+  CURL *curl = curl_easy_init();
+  if (curl == nullptr) {
+    global_logger->error("PromoteLearner: CURL initialization failed");
+    return false;
+  }
+  const std::string url = leader_url + "/AdminService/PromoteLearner";
+  const std::string body = "{\"nodeId\":" + std::to_string(node_id) + "}";
+
+  struct curl_slist *headers = nullptr;
+  headers = curl_slist_append(headers, "Content-Type: application/json");
+
+  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+  curl_easy_setopt(curl, CURLOPT_POST, 1L);
+  curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, BaseServiceImpl::WriteCallback);
+  std::string response_str;
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_str);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+
+  const CURLcode res = curl_easy_perform(curl);
+  curl_slist_free_all(headers);
+  curl_easy_cleanup(curl);
+
+  if (res != CURLE_OK) {
+    global_logger->warn("PromoteLearner: request to {} failed: {}", url, curl_easy_strerror(res));
+    return false;
+  }
+
+  rapidjson::Document doc;
+  doc.Parse(response_str.c_str());
+  if (doc.HasParseError() || !doc.IsObject() || !doc.HasMember("retCode") || !doc["retCode"].IsInt()) {
+    global_logger->warn("PromoteLearner: unexpected response from {}: {}", url, response_str);
+    return false;
+  }
+  return doc["retCode"].GetInt() == 0;
+}
+
 }  // namespace
 
 auto ServerInfo::FromJson(const rapidjson::Document &value) -> ServerInfo {
@@ -456,14 +499,15 @@ void MasterServiceImpl::UpdateRaftProgress() {
       return;
     }
 
-    // 3. 把各节点的日志进度写回 etcd（仅在变化时写入）
+    // 3. 把各节点的日志进度与 learner 状态写回 etcd（任一变化时写入）
     for (const auto &node : doc["nodes"].GetArray()) {
       if (!node.HasMember("nodeId") || !node["nodeId"].IsInt() || !node.HasMember("last_log_idx") ||
-          !node["last_log_idx"].IsUint64()) {
+          !node["last_log_idx"].IsUint64() || !node.HasMember("learner") || !node["learner"].IsBool()) {
         continue;
       }
       uint64_t node_id = static_cast<uint64_t>(node["nodeId"].GetInt());
       uint64_t last_log_idx = node["last_log_idx"].GetUint64();
+      bool is_learner = node["learner"].GetBool();
 
       // 同一 nodeId 可能属于多个实例；同处一个 Raft 组的日志进度一致，逐条写回
       for (const auto &entry : node_keys) {
@@ -482,12 +526,28 @@ void MasterServiceImpl::UpdateRaftProgress() {
           continue;
         }
 
+        bool changed = false;
+
         if (!node_doc.HasMember("lastLogIdx") || !node_doc["lastLogIdx"].IsUint64()) {
           node_doc.AddMember("lastLogIdx", rapidjson::Value(last_log_idx), node_doc.GetAllocator());
-        } else if (node_doc["lastLogIdx"].GetUint64() == last_log_idx) {
-          continue;  // 无变化，跳过写入
-        } else {
+          changed = true;
+        } else if (node_doc["lastLogIdx"].GetUint64() != last_log_idx) {
           node_doc["lastLogIdx"].SetUint64(last_log_idx);
+          changed = true;
+        }
+
+        // learner 字段缺失按"非 learner"处理：避免老集群节点被误判为
+        // learner 而反复尝试转正（用户拍板）。
+        if (!node_doc.HasMember("learner") || !node_doc["learner"].IsBool()) {
+          node_doc.AddMember("learner", rapidjson::Value(is_learner), node_doc.GetAllocator());
+          changed = true;
+        } else if (node_doc["learner"].GetBool() != is_learner) {
+          node_doc["learner"].SetBool(is_learner);
+          changed = true;
+        }
+
+        if (!changed) {
+          continue;  // 无变化，跳过写入
         }
 
         rapidjson::StringBuffer buffer;
@@ -714,8 +774,10 @@ void MasterServiceImpl::RebalanceInstance(uint64_t instance_id) {
 
   uint64_t leader_log_idx = 0;
   bool has_leader_progress = false;
+  std::string leader_url;                      // 用于回调 leader 的 PromoteLearner
   std::vector<NodeLoad> node_loads;
-  std::map<uint64_t, uint64_t> node_log_idx;  // nodeId -> lastLogIdx
+  std::map<uint64_t, uint64_t> node_log_idx;   // nodeId -> lastLogIdx
+  std::map<uint64_t, bool> node_learner;       // nodeId -> 是否为 learner
 
   for (size_t i = 0; i < nodes.keys().size(); ++i) {
     rapidjson::Document node_doc;
@@ -735,6 +797,15 @@ void MasterServiceImpl::RebalanceInstance(uint64_t instance_id) {
 
     bool alive = node_doc.HasMember("status") && node_doc["status"].GetInt() == 1;
     bool is_leader = node_doc.HasMember("role") && node_doc["role"].GetInt() == 0;
+
+    // learner 字段缺失按"非 learner"处理：老集群节点全部是正式成员，
+    // 不能因字段缺失被误判为 learner 而反复尝试转正。
+    if (node_doc.HasMember("learner") && node_doc["learner"].IsBool() && node_doc["learner"].GetBool()) {
+      node_learner[load.node_id_] = true;
+    }
+    if (is_leader && alive && node_doc.HasMember("url") && node_doc["url"].IsString()) {
+      leader_url = node_doc["url"].GetString();
+    }
 
     if (node_doc.HasMember("lastLogIdx") && node_doc["lastLogIdx"].IsUint64()) {
       uint64_t idx = node_doc["lastLogIdx"].GetUint64();
@@ -764,6 +835,35 @@ void MasterServiceImpl::RebalanceInstance(uint64_t instance_id) {
       continue;
     }
     load.ready_ = load.ready_ && HasCaughtUp(it->second, leader_log_idx);
+  }
+
+  // 3.5 自动转正：learner 追平后由 leader 提升为正式成员。
+  //     learner 不计入法定人数、也不发起选举（NuRaft handle_timeout.cxx:280），
+  //     若只加入不转正，扩容不会带来任何容错能力——这是 AddFollower 默认
+  //     以 learner 加入后必须补上的闭环。
+  //     必须在 PlanMigration 之前执行，使再平衡基于最新成员状态。
+  //     失败只记 warn 不中断，下一轮 10 秒后自然重试；真正的追平校验在
+  //     leader 侧 PromoteLearner RPC 内部（比对 GetPeerLastLogIdx 与
+  //     GetCommittedLogIdx），此处基于 etcd 快照的粗筛不会导致错误转正。
+  if (leader_url.empty()) {
+    global_logger->debug("Auto-promote skipped: no alive leader for instance {}", instance_id);
+  } else {
+    for (const auto &load : node_loads) {
+      if (!load.ready_) {
+        continue;  // 未追平不转正，否则法定人数提高后新写入会被卡住
+      }
+      const auto lit = node_learner.find(load.node_id_);
+      if (lit == node_learner.end() || !lit->second) {
+        continue;  // 非 learner（含字段缺失的保守处理）
+      }
+
+      global_logger->info("Auto-promoting learner node {} of instance {}", load.node_id_, instance_id);
+      if (PromoteLearnerOnLeader(leader_url, load.node_id_)) {
+        global_logger->info("Learner node {} promoted to voting member", load.node_id_);
+      } else {
+        global_logger->warn("Auto-promote learner node {} failed, will retry next cycle", load.node_id_);
+      }
+    }
   }
 
   // 4. 决策（纯函数）

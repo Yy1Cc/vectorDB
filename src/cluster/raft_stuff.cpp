@@ -303,25 +303,13 @@ auto RaftStuff::IsLeader() const -> bool {
   return raft_instance_->is_leader();  // 调用 raft_instance_ 的 is_leader() 方法
 }
 
-auto RaftStuff::GetAllNodesInfo() const
-    -> std::vector<std::tuple<int, std::string, std::string, nuraft::ulong, nuraft::ulong>> {
-  std::vector<std::tuple<int, std::string, std::string, nuraft::ulong, nuraft::ulong>> nodes_info;
+auto RaftStuff::GetAllNodesInfo() const -> std::vector<RaftNodeInfo> {
+  std::vector<RaftNodeInfo> nodes_info;
 
   if (!raft_instance_) {
     global_logger->warn("raft_instance empty");
     return nodes_info;
   }
-
-  // 获取配置信息
-
-  // get_srv_config_all
-  // auto config = raft_instance_->get_config();
-  // if (!config) {
-  //   return nodes_info;
-  // }
-
-  // 获取服务器列表
-  // auto servers = config->get_servers();
 
   std::vector<nuraft::ptr<nuraft::srv_config>> configs;
   raft_instance_->get_srv_config_all(configs);
@@ -329,21 +317,17 @@ auto RaftStuff::GetAllNodesInfo() const
   int leader_id = raft_instance_->get_leader();
   for (auto &entry : configs) {
     nuraft::ptr<nuraft::srv_config> &srv = entry;
-    // 获取节点状态
-    std::string node_state;
-    if (srv->get_id() == leader_id) {
-      node_state = "leader";
-    } else {
-      node_state = "follower";
-    }
+    RaftNodeInfo info;
+    info.node_id = srv->get_id();
+    info.endpoint = srv->get_endpoint();
+    info.is_learner = srv->is_learner();
+    info.role = (srv->get_id() == leader_id) ? "leader" : "follower";
 
-    // 使用正确的类型
     nuraft::raft_server::peer_info node_info = raft_instance_->get_peer_info(srv->get_id());
-    nuraft::ulong last_log_idx = node_info.last_log_idx_;
-    nuraft::ulong last_succ_resp_us = node_info.last_succ_resp_us_;
+    info.last_log_idx = node_info.last_log_idx_;
+    info.last_succ_resp_us = node_info.last_succ_resp_us_;
 
-    nodes_info.emplace_back(
-        std::make_tuple(srv->get_id(), srv->get_endpoint(), node_state, last_log_idx, last_succ_resp_us));
+    nodes_info.push_back(std::move(info));
   }
   return nodes_info;
 }

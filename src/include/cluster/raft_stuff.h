@@ -1,10 +1,24 @@
 #pragma once
 
 #include <libnuraft/asio_service.hxx>
+#include <string>
+#include <vector>
 #include "cluster/in_memory_state_mgr.h"
 #include "log_state_machine.h"
 #include "logger/logger.h"  // 包含 logger.h 以使用日志记录器
 namespace vectordb {
+
+// Raft 组内节点的信息快照。
+// is_learner 供 Master 判定谁需要自动转正：learner 不计入法定人数、
+// 也不发起选举（NuRaft handle_timeout.cxx:280），若不转正会永久丧失补位能力。
+struct RaftNodeInfo {
+    int node_id = 0;
+    std::string endpoint;
+    std::string role;  // "leader" / "follower"
+    bool is_learner = false;
+    nuraft::ulong last_log_idx = 0;
+    nuraft::ulong last_succ_resp_us = 0;
+};
 
 static const nuraft::raft_params::return_method_type CALL_TYPE
     = nuraft::raft_params::blocking;
@@ -30,7 +44,7 @@ class RaftStuff {
   auto RemoveSrv(int srv_id) -> bool;
   void EnableElectionTimeout(int lower_bound, int upper_bound);  // 定义 enableElectionTimeout 方法
   auto IsLeader() const -> bool;                                 // 添加 isLeader 方法声明
-  auto GetAllNodesInfo() const -> std::vector<std::tuple<int, std::string, std::string, nuraft::ulong, nuraft::ulong>>;
+  auto GetAllNodesInfo() const -> std::vector<RaftNodeInfo>;
   auto GetCurrentNodesInfo() const -> std::tuple<int, std::string, std::string, nuraft::ulong, nuraft::ulong>;
   auto GetNodeStatus(int node_id) const -> std::string;  // 添加 getNodeStatus 方法声明
   // 返回 true 表示日志已达成共识并提交；false 表示非 leader / 被拒绝 / 超时。
