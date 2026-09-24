@@ -23,7 +23,10 @@ void RaftStuff::Init() {
       vector_database_);  // 将 vector_database_ 参数传递给 log_state_machine 的 setVectorDatabase 函数
 
   nuraft::asio_service::options asio_opt;
-  asio_opt.thread_pool_size_ = 1;
+  // 该线程池承载全部 Raft RPC：心跳、日志复制、快照传输、投票。
+  // 原值 1 意味着任一 RPC 处理变慢（尤其是快照传输整文件读入内存）都会
+  // 让心跳停摆，follower 超时后触发选举把 leader 推翻。
+  asio_opt.thread_pool_size_ = 4;
 
   // nuraft::raft_params params;
   // params.election_timeout_lower_bound_ = 100000000;  // 设置为一个非常大的值
@@ -42,15 +45,25 @@ void RaftStuff::Init() {
   params.election_timeout_lower_bound_ = 200;
   params.election_timeout_upper_bound_ = 400;
 #endif
-  // Upto 5 logs will be preserved ahead the last snapshot.
-  params.reserved_log_items_ = 5;
-  // Snapshot will be created for every 5 log appends.
-  params.snapshot_distance_ = 5;
-  // Client timeout: 3000 ms.
-  params.client_req_timeout_ = 10000;
+  // 每次快照都要遍历所有 collection 全量写索引（Persistence::TakeSnapshot），
+  // 代价远高于一次日志追加。原值 5 意味着每 5 条写入就全量落盘一遍索引，
+  // 会让写入性能直接崩溃。改为 10 万量级：既保证日志能被压缩
+  // （避免 Raft 日志只增不减导致 OOM），又把快照开销摊薄到可忽略。
+  params.reserved_log_items_ = 1000;
+  params.snapshot_distance_ = 100000;
+  // 需能覆盖一次快照停摆。快照在 commit 线程上同步执行（非独立线程），
+  // 期间 sm_commit_index_ 不推进，客户端的 blocking append_entries 会一直等。
+  // 10 秒兜不住 GB 级索引落盘，配合 TakeSnapshot 减量后仍需放宽。
+  params.client_req_timeout_ = 60000;
   // According to this method, `append_log` function
   // should be handled differently.
   params.return_method_ = CALL_TYPE;
+
+  // 快照对象的读取（read_logical_snp_obj）改由后台线程异步执行。
+  // 默认 false 时它由 Raft worker 线程同步读，整文件读入内存（GB 级）期间
+  // 该线程无法处理任何 RPC —— 包括心跳 —— 会被 follower 误判为 leader 失联。
+  // 该参数在 NuRaft 中标注 Experimental，但默认组合的风险明确且严重得多。
+  params.use_bg_thread_for_snapshot_io_ = true;
 
   // Logger.
   std::string log_file_name = "./srv" + std::to_string(node_id_) + ".log";
@@ -83,10 +96,19 @@ void RaftStuff::Init() {
   exit(-1);
 }
 
-auto RaftStuff::AddSrv(int srv_id, const std::string &srv_endpoint) -> bool {
+auto RaftStuff::AddSrv(int srv_id, const std::string &srv_endpoint, bool as_learner) -> bool {
   bool success = false;
   nuraft::ptr<nuraft::srv_config> peer_srv_conf = nuraft::cs_new<nuraft::srv_config>(srv_id, srv_endpoint);
-  global_logger->debug("Adding server with srv_id: {}, srv_endpoint: {}", srv_id, srv_endpoint);  // 添加打印日志
+  if (as_learner) {
+    // NuRaft 的 `use_new_joiner_type_` 默认关闭，新节点会立即计入法定人数。
+    // 显式标记为 learner 才能让它后台追赶而不影响线上写入。
+    peer_srv_conf->set_learner(true);
+    global_logger->info("Adding server srv_id={} endpoint={} as LEARNER (excluded from quorum)",
+                        srv_id, srv_endpoint);
+  } else {
+    global_logger->warn("Adding server srv_id={} as full member: quorum will grow immediately, "
+                        "writes may block until it catches up", srv_id);
+  }
   auto ret = raft_instance_->add_srv(*peer_srv_conf);
 
   if (!ret->get_accepted()) {
@@ -109,27 +131,126 @@ auto RaftStuff::AddSrv(int srv_id, const std::string &srv_endpoint) -> bool {
   return success;
 }
 
+auto RaftStuff::PromoteLearner(int srv_id) -> bool {
+  if (!raft_instance_) {
+    global_logger->error("PromoteLearner: Raft instance is not available");
+    return false;
+  }
+  if (!raft_instance_->is_leader()) {
+    global_logger->error("PromoteLearner: node {} is not the leader", node_id_);
+    return false;
+  }
+  auto conf = GetSrvConfig(srv_id);
+  if (!conf) {
+    global_logger->error("PromoteLearner: srv {} not in the raft group", srv_id);
+    return false;
+  }
+  if (!conf->is_learner()) {
+    global_logger->info("PromoteLearner: srv {} is already a voting member", srv_id);
+    return true;
+  }
+
+  auto ret = raft_instance_->flip_learner_flag(srv_id, false);
+  if (!ret || ret->get_result_code() != nuraft::cmd_result_code::OK) {
+    global_logger->error("PromoteLearner: flip_learner_flag failed for srv {}", srv_id);
+    return false;
+  }
+
+  // 等待配置生效
+  const size_t max_try = 40;
+  for (size_t jj = 0; jj < max_try; ++jj) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    auto c = GetSrvConfig(srv_id);
+    if (c && !c->is_learner()) {
+      global_logger->info("Promoted srv {} to voting member", srv_id);
+      return true;
+    }
+  }
+  global_logger->error("PromoteLearner: srv {} promotion not confirmed", srv_id);
+  return false;
+}
+
+auto RaftStuff::IsVotingMember(int srv_id) const -> bool {
+  if (!raft_instance_) return false;
+  auto conf = raft_instance_->get_srv_config(srv_id);
+  return conf && !conf->is_learner();
+}
+
+auto RaftStuff::GetPeerLastLogIdx(int srv_id) const -> nuraft::ulong {
+  if (!raft_instance_) return 0;
+  nuraft::raft_server::peer_info info = raft_instance_->get_peer_info(srv_id);
+  return info.last_log_idx_;
+}
+
+auto RaftStuff::GetCommittedLogIdx() const -> nuraft::ulong {
+  if (!raft_instance_) return 0;
+  return raft_instance_->get_committed_log_idx();
+}
+
+auto RaftStuff::RemoveSrv(int srv_id) -> bool {
+  if (!raft_instance_) {
+    global_logger->error("Cannot remove srv: Raft instance is not available");
+    return false;
+  }
+  if (!raft_instance_->is_leader()) {
+    global_logger->error("Cannot remove srv {}: current node is not the leader", srv_id);
+    return false;
+  }
+  if (srv_id == node_id_) {
+    // leader 把自己摘掉会导致集群失去写入能力, 属于误用, 直接拒绝
+    global_logger->error("Refuse to remove self (node {}) from raft group", srv_id);
+    return false;
+  }
+  if (!GetSrvConfig(srv_id)) {
+    global_logger->warn("Srv {} is not in the raft group, treat as removed", srv_id);
+    return true;
+  }
+
+  global_logger->info("Removing srv {} from raft group", srv_id);
+  auto ret = raft_instance_->remove_srv(srv_id);
+  if (!ret || !ret->get_accepted()) {
+    global_logger->error("raft_stuff RemoveSrv failed for srv {}", srv_id);
+    return false;
+  }
+
+  // Wait until it disappears from server list.
+  bool success = false;
+  const size_t max_try = 40;
+  for (size_t jj = 0; jj < max_try; ++jj) {
+    global_logger->info("Wait for remove follower.");
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    auto conf = GetSrvConfig(srv_id);
+    if (!conf) {
+      success = true;
+      global_logger->info(" Remove follower done.");
+      break;
+    }
+  }
+  if (!success) {
+    global_logger->warn("Remove follower {} not confirmed within {} ms", srv_id, max_try * 250);
+  }
+  return success;
+}
+
 auto RaftStuff::GetSrvConfig(int srv_id) -> nuraft::ptr<nuraft::srv_config> {
   global_logger->debug("get server config with srv_id: {}", srv_id);  // 添加打印日志
   return raft_instance_->get_srv_config(srv_id);
 }
 
-void RaftStuff::AppendEntries(const std::string &entry) {
-  if (!raft_instance_ || !raft_instance_->is_leader()) {
-    // 添加调试日志
-    if (!raft_instance_) {
-      global_logger->debug("Cannot append entries: Raft instance is not available");
-    } else {
-      global_logger->debug("Cannot append entries: Current node is not the leader");
-    }
-    return;
+auto RaftStuff::AppendEntries(const std::string &entry) -> bool {
+  if (!raft_instance_) {
+    global_logger->error("Cannot append entries: Raft instance is not available");
+    return false;
+  }
+  if (!raft_instance_->is_leader()) {
+    // 非 leader 无法复制日志。调用方必须据此返回错误，
+    // 否则请求被静默丢弃、客户端却拿到成功响应。
+    global_logger->error("Cannot append entries: current node (id={}) is not the leader", node_id_);
+    return false;
   }
 
   // 计算所需的内存大小
   size_t total_size = sizeof(int) + entry.size();
-
-  // 添加调试日志
-  global_logger->debug("Total size of entry: {}", total_size);
 
   // 创建一个 Raft 日志条目
   nuraft::ptr<nuraft::buffer> log_entry_buffer = nuraft::buffer::alloc(total_size);
@@ -137,18 +258,13 @@ void RaftStuff::AppendEntries(const std::string &entry) {
 
   bs_log.put_str(entry);
 
-  // 添加调试日志
-  global_logger->debug("Created log_entry_buffer at address: {}", static_cast<const void *>(log_entry_buffer.get()));
-
-  // 添加调试日志
-  global_logger->debug("Appending entry to Raft instance");
-
   // 将日志条目追加到 Raft 实例中
   auto ret = raft_instance_->append_entries({log_entry_buffer});
 
   if (!ret->get_accepted()) {
     // Log append rejected, usually because this node is not a leader.
-    global_logger->debug("Failed append log {}", static_cast<int>(ret->get_result_code()));
+    global_logger->error("Failed append log: result_code={}", static_cast<int>(ret->get_result_code()));
+    return false;
   }
   // Log append accepted, but that doesn't mean the log is committed.
   // Commit result can be obtained below.
@@ -157,17 +273,18 @@ void RaftStuff::AppendEntries(const std::string &entry) {
     // Blocking mode:
     //   `append_entries` returns after getting a consensus,
     //   so that `ret` already has the result from state machine.
-    HandleResult(*ret);
+    return HandleResult(*ret);
 
   } else if (CALL_TYPE == nuraft::raft_params::async_handler) {
     // Async mode:
-    //   `append_entries` returns immediately.
-    //   `handle_result` will be invoked asynchronously,
-    //   after getting a consensus.
+    //   `append_entries` returns immediately, commit result is not available yet.
+    //   此处只能判定"已被受理"，最终结果由回调里的 HandleResult 处理。
+    global_logger->debug("Append log accepted (async mode), commit result pending");
     ret->when_ready(std::bind(&RaftStuff::HandleResult, this, std::placeholders::_1));
-  } else {
-    assert(0);
+    return true;
   }
+  assert(0);
+  return false;
 }
 
 void RaftStuff::EnableElectionTimeout(int lower_bound, int upper_bound) {
@@ -269,15 +386,17 @@ auto RaftStuff::GetCurrentNodesInfo() const -> std::tuple<int, std::string, std:
   return nodes_info;
 }
 
-void RaftStuff::HandleResult(nuraft::cmd_result<nuraft::ptr<nuraft::buffer>> &result) {
+auto RaftStuff::HandleResult(nuraft::cmd_result<nuraft::ptr<nuraft::buffer>> &result) -> bool {
   if (result.get_result_code() != nuraft::cmd_result_code::OK) {
     // Something went wrong.
     // This means committing this log failed,
     // but the log itself is still in the log store.
-    global_logger->error("failed: {}", static_cast<int>(result.get_result_code()));
-    return;
+    // 必须向上返回 false，否则调用方会让客户端误以为写入成功。
+    global_logger->error("Raft commit failed: result_code={}", static_cast<int>(result.get_result_code()));
+    return false;
   }
-  global_logger->info("succeed");
+  global_logger->debug("Raft commit succeeded");
+  return true;
 }
 
 }  // namespace vectordb

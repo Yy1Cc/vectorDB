@@ -14,15 +14,30 @@ class RaftStuff {
   RaftStuff(int node_id, std::string &endpoint, int port, VectorDatabase *vector_database);
 
   void Init();
-  auto AddSrv(int srv_id, const std::string &srv_endpoint) -> bool;
+  // as_learner=true：新节点不计入法定人数，可后台追赶而不阻塞线上写入。
+  // 默认 false 是为了兼容既有调用；生产环境加节点应显式用 learner 再加入后转正。
+  auto AddSrv(int srv_id, const std::string &srv_endpoint, bool as_learner = false) -> bool;
+  // 将 learner 提升为正式成员。必须在它追平 leader 日志后调用，
+  // 否则法定人数立刻提高，新写入会被未追上的节点卡住直至超时。
+  auto PromoteLearner(int srv_id) -> bool;
+  // 查询对端是否已成为正式成员（learner 标记为 false）
+  auto IsVotingMember(int srv_id) const -> bool;
+  // 查询对端已追到的日志位置，用于判断 learner 是否追平
+  auto GetPeerLastLogIdx(int srv_id) const -> nuraft::ulong;
+  // 本节点已提交的日志位置
+  auto GetCommittedLogIdx() const -> nuraft::ulong;
+  // 将节点从 Raft 组中摘除（缩容）。必须由 leader 发起，且拒绝摘除自身。
+  auto RemoveSrv(int srv_id) -> bool;
   void EnableElectionTimeout(int lower_bound, int upper_bound);  // 定义 enableElectionTimeout 方法
   auto IsLeader() const -> bool;                                 // 添加 isLeader 方法声明
   auto GetAllNodesInfo() const -> std::vector<std::tuple<int, std::string, std::string, nuraft::ulong, nuraft::ulong>>;
   auto GetCurrentNodesInfo() const -> std::tuple<int, std::string, std::string, nuraft::ulong, nuraft::ulong>;
   auto GetNodeStatus(int node_id) const -> std::string;  // 添加 getNodeStatus 方法声明
-  void AppendEntries(const std::string &entry);
+  // 返回 true 表示日志已达成共识并提交；false 表示非 leader / 被拒绝 / 超时。
+  // 调用方必须据此设置响应码，否则写入失败会被静默吞掉（历史上 upsert 无条件返回成功）。
+  auto AppendEntries(const std::string &entry) -> bool;
   auto GetSrvConfig(int srv_id) -> nuraft::ptr<nuraft::srv_config>;
-  void HandleResult(nuraft::cmd_result< nuraft::ptr<nuraft::buffer> >& result);
+  auto HandleResult(nuraft::cmd_result< nuraft::ptr<nuraft::buffer> >& result) -> bool;
  private:
  
  private:

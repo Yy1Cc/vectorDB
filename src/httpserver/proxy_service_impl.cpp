@@ -61,9 +61,32 @@ void ProxyServiceImpl::topology(::google::protobuf::RpcController *controller,
   // 设置响应
   SetJsonResponse(doc, cntl);
 }
+namespace {
+// 判断请求体是否携带过滤条件（filters 数组或单个 filter 对象）
+auto RequestHasFilter(const std::string &body) -> bool {
+  rapidjson::Document doc;
+  if (doc.Parse(body.c_str()).HasParseError() || !doc.IsObject()) return false;
+  if (doc.HasMember("filters") && doc["filters"].IsArray() && doc["filters"].Size() > 0) return true;
+  return doc.HasMember("filter") && doc["filter"].IsObject();
+}
+}  // namespace
+
 void ProxyServiceImpl::ForwardRequest(brpc::Controller *cntl, ::google::protobuf::Closure *done,
                                       const std::string &path) {
   global_logger->debug("Received {} request", path);
+
+  // 带过滤条件的读请求必须广播到所有分区。
+  // 若按 partitionKey 只路由到单个分区，而过滤字段与 partitionKey 不是同一个字段
+  // （GARDEN 标量过滤正是这种情况），其余分区里满足过滤条件的数据永远搜不到，
+  // 表现为结果静默不全、且没有任何报错。
+  if (write_paths_.find(path) == write_paths_.end() &&
+      RequestHasFilter(cntl->request_attachment().to_string())) {
+    global_logger->info("Read request carries filter conditions, broadcasting to all partitions "
+                        "to avoid incomplete results");
+    BroadcastRequestToAllPartitions(cntl, path);
+    return;
+  }
+
   std::string partition_key_value;
   if (!ExtractPartitionKeyValue(cntl->request_attachment().to_string(), partition_key_value)) {
     // 对于写请求，如果没有分区键（如批量插入），直接转发到主节点

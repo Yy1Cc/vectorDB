@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+#include <string>
 #include <vector>
 #include "hnswlib/hnswlib.h"
 #include "index_factory.h"
@@ -22,6 +24,16 @@ public:
 
     void SaveIndex(const std::string& file_path); // 添加 saveIndex 方法声明
     void LoadIndex(const std::string& file_path); // 添加 loadIndex 方法声明
+
+    // 内存序列化：用于 GARDEN 的单文件容器格式与 Raft 快照流式传输。
+    // hnswlib 只暴露基于文件路径的 saveIndex/loadIndex，这里借道临时文件
+    // 转成内存 buffer，把实现细节屏蔽在索引层内部。
+    // Deserialize 失败时抛出 std::runtime_error。
+    auto Serialize() -> std::vector<char>;
+    void Deserialize(const char* data, size_t size);
+
+    // 当前索引中的向量条数。用于负载上报与再平衡决策。
+    auto GetTotalCount() const -> int64_t;
 
         // 定义 RoaringBitmapIDFilter 类
     class RoaringBitmapIDFilter : public hnswlib::BaseFilterFunctor {

@@ -79,6 +79,11 @@ void IndexFactory::SaveIndex(const std::string& folder_path) { // 添加 ScalarS
             static_cast<FaissIndex*>(index)->SaveIndex(file_path);
         } else if (index_type == IndexType::LAYERED_FLAT || index_type == IndexType::LAYERED_SQ8) { // 保存分层索引
             static_cast<LayeredIndex*>(index)->SaveIndex(file_path);
+        } else if (index_type == IndexType::GARDEN_HNSW) { // 保存 GARDEN 索引
+            // 此前 SaveIndex 缺少该分支（LoadIndex 却已支持），导致快照时 GARDEN 索引
+            // 一个字节都不落盘，重启后 GardenIndex::LoadIndex 找不到 meta 直接跳过，
+            // 表现为 GARDEN 数据静默丢失、查询返回全 -1。
+            static_cast<GardenIndex*>(index)->SaveIndex(file_path);
         }
     }
 }
@@ -107,6 +112,19 @@ void IndexFactory::LoadIndex(const std::string& folder_path) { // 添加 loadInd
             static_cast<GardenIndex*>(index)->LoadIndex(file_path);
         }
     }
+}
+
+auto IndexFactory::GetTotalCount() const -> int64_t {
+    auto it = index_map_.find(IndexType::FLAT);
+    if (it != index_map_.end() && it->second != nullptr) {
+        return static_cast<FaissIndex*>(it->second)->GetTotalCount();
+    }
+    // FLAT 未初始化时退化为 HNSW
+    it = index_map_.find(IndexType::HNSW);
+    if (it != index_map_.end() && it->second != nullptr) {
+        return static_cast<HNSWLibIndex*>(it->second)->GetTotalCount();
+    }
+    return 0;
 }
 
 }  // namespace vectordb

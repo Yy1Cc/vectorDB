@@ -37,6 +37,10 @@ public:
      void SaveIndex(const std::string& folder_path); // 添加 ScalarStorage 参数
     void LoadIndex(const std::string& folder_path); // 添加 loadIndex 方法声明
 
+    // 该 Collection 的向量条数。以 FLAT 索引为准（所有写入路径都会维护它）；
+    // 若 FLAT 未初始化则退化为 HNSW，都没有则为 0。用于负载上报与再平衡决策。
+    auto GetTotalCount() const -> int64_t;
+
 
 
 private:

@@ -35,8 +35,11 @@ service AdminService {
 rpc snapshot(HttpRequest) returns (HttpResponse);
 rpc SetLeader(HttpRequest) returns (HttpResponse);
 rpc AddFollower(HttpRequest) returns (HttpResponse);
+rpc RemoveFollower(HttpRequest) returns (HttpResponse);
 rpc ListNode(HttpRequest) returns (HttpResponse);
 rpc GetNode(HttpRequest) returns (HttpResponse);
+// 将已追平的 learner 提升为正式成员（计入法定人数）
+rpc PromoteLearner(HttpRequest) returns (HttpResponse);
 rpc createCollection(HttpRequest) returns (HttpResponse);
 rpc dropCollection(HttpRequest) returns (HttpResponse);
 rpc listCollections(HttpRequest) returns (HttpResponse);

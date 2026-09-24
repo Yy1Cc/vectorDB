@@ -114,9 +114,14 @@ public:
     auto GetDiscreteValues(const std::string& field) const -> std::vector<std::string>;
 
     // GARDEN 论文参数
-    static constexpr int kBruteBound = 10000;        // 暴力检索阈值
+    static constexpr int kBruteBound = 10000;        // 暴力检索阈值（绝对上限）
     static constexpr double kFullSearchRate = 0.8;    // > 此值：全量图 + Selector 后过滤
-    static constexpr double kExpandSearchRate = 0.1;  // > 此值：ACORN 退化（增大 ef + bitmap）
+    // 暴力阈值的相对部分：候选集低于本地总量该比例才考虑走暴力。
+    // 必要性：分区部署下每个分区只持有 1/N 数据，候选集被摊薄到 1/N。
+    // 若阈值只看绝对量，分区越多越容易掉进暴力路径 —— 而实测（10万×4096维）
+    // 暴力路径 QPS 仅 1~11，子图路径 171~193，差距达两个数量级。
+    static constexpr double kBruteForceRate = 0.01;
+    static constexpr int kMinBruteBound = 500;       // 阈值下限，避免极小数据集反而绕远路
 
 private:
     int dim_;

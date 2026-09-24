@@ -609,6 +609,12 @@ auto VectorDatabase::Search(const std::string& collection_name, const rapidjson:
                     gf.has_range = true;
                     gf.range_min = INT64_MIN;
                     gf.range_max = value;
+                } else if (op == FilterIndex::Operation::EQUAL) {
+                    // 等值过滤：GARDEN 的连续 Pruner 需要显式区间才能定位分桶。
+                    // 不填的话 range_min/max 保持默认 0,0，会退化成只搜第 0 号桶。
+                    gf.has_range = true;
+                    gf.range_min = value;
+                    gf.range_max = value;
                 }
             }
 
@@ -805,6 +811,106 @@ auto VectorDatabase::Search(const std::string& collection_name, const rapidjson:
 }
 void VectorDatabase::TakeSnapshot() {
     persistence_.TakeSnapshot();
+}
+
+void VectorDatabase::TakeSnapshot(uint64_t snapshot_log_id) {
+    persistence_.TakeSnapshot(snapshot_log_id);
+}
+
+void VectorDatabase::TruncateWalBefore(uint64_t last_log_id) {
+    persistence_.TruncateWalBefore(last_log_id);
+}
+
+auto VectorDatabase::ApplyCreateCollection(const rapidjson::Document& json_request) -> bool {
+    std::string name = DEFAULT_COLLECTION_NAME;
+    if (json_request.HasMember(REQUEST_COLLECTION_NAME) && json_request[REQUEST_COLLECTION_NAME].IsString()) {
+        name = json_request[REQUEST_COLLECTION_NAME].GetString();
+    }
+    int dim = 0;
+    if (json_request.HasMember("dim") && json_request["dim"].IsInt()) {
+        dim = json_request["dim"].GetInt();
+    }
+    int num_data = Cfg::Instance().NumData();
+    if (json_request.HasMember("numData") && json_request["numData"].IsInt()) {
+        num_data = json_request["numData"].GetInt();
+    }
+    IndexFactory::MetricType metric = IndexFactory::MetricType::L2;
+    if (json_request.HasMember("metric") && json_request["metric"].IsString() &&
+        std::string(json_request["metric"].GetString()) == "IP") {
+        metric = IndexFactory::MetricType::IP;
+    }
+
+    if (dim <= 0) {
+        global_logger->error("ApplyCreateCollection: invalid dim {} for collection '{}'", dim, name);
+        return false;
+    }
+    // 幂等：副本重放或重复调用时不重建，否则会丢弃已有数据
+    if (CollectionManager::Instance().GetCollection(name) != nullptr) {
+        global_logger->debug("ApplyCreateCollection: collection '{}' already exists, skip", name);
+        return true;
+    }
+    return CollectionManager::Instance().CreateCollection(name, dim, num_data, metric);
+}
+
+auto VectorDatabase::ApplyRegisterGardenField(const rapidjson::Document& json_request) -> bool {
+    std::string collection_name = DEFAULT_COLLECTION_NAME;
+    if (json_request.HasMember(REQUEST_COLLECTION_NAME) && json_request[REQUEST_COLLECTION_NAME].IsString()) {
+        collection_name = json_request[REQUEST_COLLECTION_NAME].GetString();
+    }
+    auto* coll = CollectionManager::Instance().GetCollection(collection_name);
+    if (coll == nullptr) {
+        global_logger->error("ApplyRegisterGardenField: collection '{}' not found", collection_name);
+        return false;
+    }
+    auto* garden = static_cast<GardenIndex*>(coll->GetIndex(IndexFactory::IndexType::GARDEN_HNSW));
+    if (garden == nullptr) {
+        global_logger->error("ApplyRegisterGardenField: GARDEN_HNSW index not initialized for '{}'", collection_name);
+        return false;
+    }
+    if (!json_request.HasMember("field") || !json_request["field"].IsString() ||
+        !json_request.HasMember("fieldType") || !json_request["fieldType"].IsString()) {
+        global_logger->error("ApplyRegisterGardenField: missing field or fieldType");
+        return false;
+    }
+
+    const std::string field = json_request["field"].GetString();
+    const std::string field_type = json_request["fieldType"].GetString();
+
+    if (field_type == "discrete") {
+        // 幂等：RegisterDiscreteField 本身可重复调用，但显式跳过能避免无谓日志
+        if (!garden->HasDiscreteSubgraph(field)) {
+            garden->RegisterDiscreteField(field);
+        }
+        return true;
+    }
+
+    if (field_type == "continuous") {
+        // 幂等保护至关重要：RegisterContinuousField 会重建所有分桶，
+        // 重复调用会丢掉桶内已积累的数据。
+        if (garden->HasContinuousSubgraph(field)) {
+            global_logger->debug("ApplyRegisterGardenField: continuous field '{}' already registered, skip", field);
+            return true;
+        }
+        if (!json_request.HasMember("min") || !json_request.HasMember("max")) {
+            global_logger->error("ApplyRegisterGardenField: continuous field '{}' requires min and max", field);
+            return false;
+        }
+        int64_t min_val = json_request["min"].GetInt64();
+        int64_t max_val = json_request["max"].GetInt64();
+        int bucket_size = GardenIndex::kBruteBound;
+        if (json_request.HasMember("bucketSize") && json_request["bucketSize"].IsInt()) {
+            bucket_size = json_request["bucketSize"].GetInt();
+        }
+        if (min_val >= max_val || bucket_size <= 0) {
+            global_logger->error("ApplyRegisterGardenField: invalid range or bucketSize for '{}'", field);
+            return false;
+        }
+        garden->RegisterContinuousField(field, min_val, max_val, bucket_size);
+        return true;
+    }
+
+    global_logger->error("ApplyRegisterGardenField: fieldType must be 'discrete' or 'continuous', got '{}'", field_type);
+    return false;
 }
 
 auto VectorDatabase::GetStartIndexId() const -> int64_t {

@@ -116,13 +116,21 @@ void UserServiceImpl::insert(::google::protobuf::RpcController *controller, cons
     return;
   }
 
-  std::vector<float> data;
-  for (const auto &d : json_request[REQUEST_VECTORS].GetArray()) {
-    data.push_back(d.GetFloat());
+  // 校验 vectors 是合法的浮点数组（提前拦下格式错误，避免把坏日志写进 Raft）
+  if (!json_request[REQUEST_VECTORS].IsArray()) {
+    global_logger->error("vectors must be an array");
+    cntl->http_response().set_status_code(400);
+    SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "vectors must be an array");
+    return;
   }
-  uint64_t label = json_request[REQUEST_ID].GetUint64();
-
-  global_logger->debug("Insert parameters: label = {}", label);
+  for (const auto &d : json_request[REQUEST_VECTORS].GetArray()) {
+    if (!d.IsNumber()) {
+      global_logger->error("Invalid element in vectors array");
+      cntl->http_response().set_status_code(400);
+      SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "vectors must be an array of numbers");
+      return;
+    }
+  }
 
   IndexFactory::IndexType index_type = GetIndexTypeFromRequest(json_request);
 
@@ -133,58 +141,14 @@ void UserServiceImpl::insert(::google::protobuf::RpcController *controller, cons
     return;
   }
 
-  // 解析 collectionName（默认 "default"）
-  std::string collection_name = DEFAULT_COLLECTION_NAME;
-  if (json_request.HasMember(REQUEST_COLLECTION_NAME) && json_request[REQUEST_COLLECTION_NAME].IsString()) {
-    collection_name = json_request[REQUEST_COLLECTION_NAME].GetString();
-  }
-
-  // 通过 CollectionManager 获取对应 Collection 的索引，不存在则自动创建
-  auto* coll = CollectionManager::Instance().GetCollection(collection_name);
-  if (coll == nullptr) {
-    int dim = static_cast<int>(data.size());
-    if (dim <= 0) {
-      global_logger->error("Collection '{}' not found and cannot infer dimension", collection_name);
-      cntl->http_response().set_status_code(400);
-      SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Collection not found");
-      return;
-    }
-    global_logger->info("Auto-creating collection '{}' dim={}", collection_name, dim);
-    CollectionManager::Instance().CreateCollection(collection_name, dim, 1000000);
-    coll = CollectionManager::Instance().GetCollection(collection_name);
-    if (coll == nullptr) {
-      cntl->http_response().set_status_code(400);
-      SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Failed to create collection");
-      return;
-    }
-  }
-
-  void *index = coll->GetIndex(index_type);
-  assert(index != nullptr);
-
-  switch (index_type) {
-    case IndexFactory::IndexType::FLAT:
-    case IndexFactory::IndexType::SQ8:
-    case IndexFactory::IndexType::SQ4:
-    case IndexFactory::IndexType::IP_FLAT:
-    case IndexFactory::IndexType::IP_SQ8: {
-      auto *faiss_index = static_cast<FaissIndex *>(index);
-      faiss_index->InsertVectors(data, label);
-      break;
-    }
-    case IndexFactory::IndexType::HNSW: {
-      auto *hnsw_index = static_cast<HNSWLibIndex *>(index);
-      hnsw_index->InsertVectors(data, label);
-      break;
-    }
-    case IndexFactory::IndexType::LAYERED_FLAT:
-    case IndexFactory::IndexType::LAYERED_SQ8: {
-      auto *layered = static_cast<LayeredIndex *>(index);
-      layered->InsertVectors(data, label);
-      break;
-    }
-    default:
-      break;
+  // insert 必须经 Raft 复制：此前它直接写本地索引，既不会同步到其它副本，
+  // 也不写 WAL，数据只存在于接收到请求的那个节点上（proxy 轮询时随机命中）。
+  // 重放侧走 VectorDatabase::Upsert（先删后插的幂等覆盖写），
+  // 且 Upsert 已覆盖 GARDEN_HNSW —— 此前本地 switch 缺少该 case，
+  // 对 GARDEN 索引调用 insert 会静默什么都不做却返回成功。
+  if (!raft_stuff_->AppendEntries(cntl->request_attachment().to_string())) {
+    SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Failed to replicate write via Raft");
+    return;
   }
 
   rapidjson::Document json_response;
@@ -233,17 +197,14 @@ void UserServiceImpl::upsert(::google::protobuf::RpcController *controller, cons
     }
   }
 
-  // uint64_t label = json_request[REQUEST_ID].GetUint64();
-
-  // // 获取请求参数中的索引类型
-  // IndexFactory::IndexType index_type = GetIndexTypeFromRequest(json_request);
-
-   // 调用 RaftStuff 的 appendEntries 方法将新的日志条目添加到集群中
-  raft_stuff_->AppendEntries(cntl->request_attachment().to_string());
-
-  // vector_database_->Upsert(label, json_request, index_type);
-  // // 在 upsert 调用之后调用 VectorDatabase::writeWALLog
-  // vector_database_->WriteWalLog("upsert", json_request);
+  // 调用 RaftStuff 的 appendEntries 方法将新的日志条目添加到集群中。
+  // 必须检查返回值：非 leader / 被拒绝 / 提交超时都会返回 false。
+  // 此前无条件返回 retCode=0，导致写入失败时客户端以为成功、数据静默丢失。
+  if (!raft_stuff_->AppendEntries(cntl->request_attachment().to_string())) {
+    global_logger->error("Upsert failed: Raft replication did not succeed");
+    SetErrorJsonResponse(cntl, RESPONSE_RETCODE_ERROR, "Failed to replicate write via Raft");
+    return;
+  }
 
   rapidjson::Document json_response;
   json_response.SetObject();

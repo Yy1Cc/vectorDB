@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -297,7 +298,11 @@ auto GardenIndex::Search(const std::vector<float>& query, int k,
         bool has_disc_sub = HasDiscreteSubgraph(filter.field);
         bool has_cont_sub = HasContinuousSubgraph(filter.field);
 
-        if ((has_disc_sub || has_cont_sub) && filter.cardinality > 0) {
+        // 连续子图必须带区间信息才能定位桶。等值过滤（has_range=false）若当 Pruner，
+        // range_min/max 会保持默认 0,0，导致下面只收集到第 0 号桶，召回严重劣化。
+        bool pruner_capable = has_disc_sub || (has_cont_sub && filter.has_range);
+
+        if (pruner_capable && filter.cardinality > 0) {
             // 有子图的条件：候选 Pruner
             double sel = EstimateSelectivity(filter.cardinality);
             if (sel < pruner_selectivity) {
@@ -364,8 +369,18 @@ auto GardenIndex::Search(const std::vector<float>& query, int k,
     // ---- 路由决策 ----
 
     // 策略 1: 候选集 < brute_bound → 暴力检索
-    if (candidate_count > 0 && candidate_count < static_cast<size_t>(kBruteBound)) {
-        global_logger->debug("GardenIndex: brute force (candidate={} < {})", candidate_count, kBruteBound);
+    //
+    // 阈值取"绝对上限 kBruteBound"与"本地总量的 kBruteForceRate"中较小的那个。
+    // 只取绝对上限时，分区部署下候选被摊薄到 1/N，会大面积退化成暴力路径；
+    // 同比缩小阈值才能让分区后的路由决策与单机时保持一致。
+    size_t brute_bound = kBruteBound;
+    if (total_count_ > 0) {
+        const size_t relative_bound =
+            static_cast<size_t>(kBruteForceRate * static_cast<double>(total_count_));
+        brute_bound = std::min<size_t>(brute_bound, std::max<size_t>(relative_bound, kMinBruteBound));
+    }
+    if (candidate_count > 0 && candidate_count < brute_bound) {
+        global_logger->debug("GardenIndex: brute force (candidate={} < {})", candidate_count, brute_bound);
         auto result = BruteForceSearch(query, k, grafter_bitmap, selector_bitmap);
         if (grafter_bitmap) roaring_bitmap_free(grafter_bitmap);
         return result;
@@ -582,192 +597,298 @@ auto GardenIndex::EstimateSelectivity(size_t cardinality) const -> double {
 // 持久化
 // ============================================================================
 
+namespace {
+// 单文件容器格式的魔数与版本。Load 时先校验，避免把别的文件误当索引解析。
+constexpr char kGardenMagic[8] = {'G', 'A', 'R', 'D', 'E', 'N', '0', '1'};
+constexpr uint32_t kGardenFormatVersion = 1;
+
+template <typename T>
+void WritePod(std::ostream& os, const T& v) {
+    os.write(reinterpret_cast<const char*>(&v), sizeof(T));
+}
+
+template <typename T>
+auto ReadPod(std::istream& is, T* out) -> bool {
+    return static_cast<bool>(is.read(reinterpret_cast<char*>(out), sizeof(T)));
+}
+
+void WriteStr(std::ostream& os, const std::string& s) {
+    WritePod<uint32_t>(os, static_cast<uint32_t>(s.size()));
+    if (!s.empty()) os.write(s.data(), static_cast<std::streamsize>(s.size()));
+}
+
+auto ReadStr(std::istream& is, std::string* out) -> bool {
+    uint32_t n = 0;
+    if (!ReadPod<uint32_t>(is, &n)) return false;
+    out->resize(n);
+    if (n > 0 && !is.read(out->data(), static_cast<std::streamsize>(n))) return false;
+    return true;
+}
+
+void WriteBlob(std::ostream& os, const std::vector<char>& bytes) {
+    WritePod<uint64_t>(os, static_cast<uint64_t>(bytes.size()));
+    if (!bytes.empty()) os.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+}
+
+auto ReadBlob(std::istream& is, std::vector<char>* out) -> bool {
+    uint64_t n = 0;
+    if (!ReadPod<uint64_t>(is, &n)) return false;
+    out->resize(n);
+    if (n > 0 && !is.read(out->data(), static_cast<std::streamsize>(n))) return false;
+    return true;
+}
+}  // namespace
+
 void GardenIndex::SaveIndex(const std::string& path) {
-    // 全量图
-    full_index_->SaveIndex(path + "_full.index");
-
-    // 离散子图
-    for (const auto& [field, value_map] : discrete_subgraphs_) {
-        for (const auto& [value, index] : value_map) {
-            if (index) {
-                index->SaveIndex(path + "_disc_" + field + "_" + value + ".index");
-            }
-        }
-    }
-
-    // 连续分桶子图
-    for (const auto& [field, config] : continuous_fields_) {
-        for (size_t i = 0; i < config.buckets.size(); ++i) {
-            if (config.buckets[i].index) {
-                config.buckets[i].index->SaveIndex(
-                    path + "_cont_" + field + "_" + std::to_string(i) + ".index");
-            }
-        }
-    }
-
-    // 元数据（id_to_vector, counts, config）
-    std::ofstream meta(path + "_meta.bin", std::ios::binary);
-    if (!meta.is_open()) {
-        global_logger->error("GardenIndex: failed to open meta file for saving: {}", path);
+    const std::string file_path = path + "_garden.bin";
+    std::ofstream out(file_path, std::ios::binary | std::ios::trunc);
+    if (!out.is_open()) {
+        global_logger->error("GardenIndex: failed to open {} for saving", file_path);
         return;
     }
-    // 简单文本格式：先写 total_count 和 dim
-    meta << total_count_ << " " << dim_ << "\n";
-    // id_to_vector
-    meta << id_to_vector_.size() << "\n";
+
+    out.write(kGardenMagic, sizeof(kGardenMagic));
+    WritePod<uint32_t>(out, kGardenFormatVersion);
+    WritePod<int32_t>(out, static_cast<int32_t>(dim_));
+    WritePod<uint64_t>(out, static_cast<uint64_t>(total_count_));
+
+    // 全量图
+    WriteBlob(out, full_index_->Serialize());
+
+    // 原始向量表（暴力检索路径依赖它）
+    WritePod<uint64_t>(out, static_cast<uint64_t>(id_to_vector_.size()));
     for (const auto& [id, vec] : id_to_vector_) {
-        meta << id;
-        for (float v : vec) meta << " " << v;
-        meta << "\n";
+        WritePod<int64_t>(out, id);
+        if (!vec.empty()) {
+            out.write(reinterpret_cast<const char*>(vec.data()),
+                      static_cast<std::streamsize>(vec.size() * sizeof(float)));
+        }
     }
-    // 反向映射（REVMAP 哨兵，便于 Load 时识别；假设 field/value 不含空白）
-    meta << "REVMAP\n";
-    meta << id_to_discrete_.size() << "\n";
+
+    // 反向映射：id -> (field -> value)
+    WritePod<uint64_t>(out, static_cast<uint64_t>(id_to_discrete_.size()));
     for (const auto& [id, fmap] : id_to_discrete_) {
-        meta << id << " " << fmap.size();
-        for (const auto& [field, value] : fmap) meta << " " << field << " " << value;
-        meta << "\n";
+        WritePod<int64_t>(out, id);
+        WritePod<uint32_t>(out, static_cast<uint32_t>(fmap.size()));
+        for (const auto& [field, value] : fmap) {
+            WriteStr(out, field);
+            WriteStr(out, value);
+        }
     }
-    meta << id_to_continuous_bucket_.size() << "\n";
+
+    // 反向映射：id -> (field -> bucket_idx)
+    WritePod<uint64_t>(out, static_cast<uint64_t>(id_to_continuous_bucket_.size()));
     for (const auto& [id, fmap] : id_to_continuous_bucket_) {
-        meta << id << " " << fmap.size();
-        for (const auto& [field, bidx] : fmap) meta << " " << field << " " << bidx;
-        meta << "\n";
+        WritePod<int64_t>(out, id);
+        WritePod<uint32_t>(out, static_cast<uint32_t>(fmap.size()));
+        for (const auto& [field, bidx] : fmap) {
+            WriteStr(out, field);
+            WritePod<int32_t>(out, static_cast<int32_t>(bidx));
+        }
     }
-    // 字段配置（FIELDS 哨兵，Load 时据此重建子图结构，解决重启后子图加载不了的既有限制）
-    meta << "FIELDS\n";
-    meta << discrete_fields_.size() << "\n";
-    for (const auto& field : discrete_fields_) {
-        meta << field << "\n";
-    }
-    meta << continuous_fields_.size() << "\n";
+
+    // 离散字段集合
+    WritePod<uint32_t>(out, static_cast<uint32_t>(discrete_fields_.size()));
+    for (const auto& field : discrete_fields_) WriteStr(out, field);
+
+    // 连续字段配置（只写配置，子图字节流在下一节）
+    WritePod<uint32_t>(out, static_cast<uint32_t>(continuous_fields_.size()));
     for (const auto& [field, config] : continuous_fields_) {
-        meta << field << " " << config.field_min << " " << config.field_max
-             << " " << config.bucket_size << "\n";
+        WriteStr(out, field);
+        WritePod<int64_t>(out, config.field_min);
+        WritePod<int64_t>(out, config.field_max);
+        WritePod<int64_t>(out, static_cast<int64_t>(config.bucket_size));
+        WritePod<uint64_t>(out, static_cast<uint64_t>(config.buckets.size()));
     }
-    meta.close();
-    global_logger->info("GardenIndex: saved to {}", path);
+
+    // 离散子图：(field, value, count, blob)
+    uint64_t num_disc_sub = 0;
+    for (const auto& [field, value_map] : discrete_subgraphs_) num_disc_sub += value_map.size();
+    WritePod<uint64_t>(out, num_disc_sub);
+    for (const auto& [field, value_map] : discrete_subgraphs_) {
+        for (const auto& [value, index] : value_map) {
+            WriteStr(out, field);
+            WriteStr(out, value);
+            size_t cnt = 0;
+            auto cit = discrete_counts_.find(field);
+            if (cit != discrete_counts_.end()) {
+                auto vit = cit->second.find(value);
+                if (vit != cit->second.end()) cnt = vit->second;
+            }
+            WritePod<uint64_t>(out, static_cast<uint64_t>(cnt));
+            WriteBlob(out, index ? index->Serialize() : std::vector<char>{});
+        }
+    }
+
+    // 连续分桶子图：(field, bucket_idx, count, blob)
+    uint64_t num_bucket_sub = 0;
+    for (const auto& [field, config] : continuous_fields_) num_bucket_sub += config.buckets.size();
+    WritePod<uint64_t>(out, num_bucket_sub);
+    for (const auto& [field, config] : continuous_fields_) {
+        for (size_t i = 0; i < config.buckets.size(); ++i) {
+            WriteStr(out, field);
+            WritePod<uint64_t>(out, static_cast<uint64_t>(i));
+            WritePod<uint64_t>(out, static_cast<uint64_t>(config.buckets[i].count));
+            WriteBlob(out, config.buckets[i].index ? config.buckets[i].index->Serialize()
+                                                   : std::vector<char>{});
+        }
+    }
+
+    out.flush();
+    out.close();
+    global_logger->info("GardenIndex: saved to {} ({} discrete subgraphs, {} buckets)",
+                        file_path, num_disc_sub, num_bucket_sub);
 }
 
 void GardenIndex::LoadIndex(const std::string& path) {
-    // 全量图
-    full_index_->LoadIndex(path + "_full.index");
-
-    // 元数据
-    std::ifstream meta(path + "_meta.bin", std::ios::binary);
-    if (!meta.is_open()) {
-        global_logger->warn("GardenIndex: meta file not found: {}, skipping load", path);
+    const std::string file_path = path + "_garden.bin";
+    std::ifstream in(file_path, std::ios::binary);
+    if (!in.is_open()) {
+        global_logger->warn("GardenIndex: snapshot file not found: {}, skipping load", file_path);
         return;
     }
-    meta >> total_count_ >> dim_;
-    size_t vec_count;
-    meta >> vec_count;
+
+    char magic[sizeof(kGardenMagic)] = {};
+    if (!in.read(magic, sizeof(magic)) ||
+        std::memcmp(magic, kGardenMagic, sizeof(kGardenMagic)) != 0) {
+        global_logger->error("GardenIndex: bad magic in {}, skipping load", file_path);
+        return;
+    }
+    uint32_t version = 0;
+    if (!ReadPod<uint32_t>(in, &version) || version != kGardenFormatVersion) {
+        global_logger->error("GardenIndex: unsupported format version {} in {}, skipping load",
+                             version, file_path);
+        return;
+    }
+
+    int32_t dim = 0;
+    uint64_t total = 0;
+    ReadPod<int32_t>(in, &dim);
+    ReadPod<uint64_t>(in, &total);
+    dim_ = dim;
+    total_count_ = total;
+
+    // 全量图
+    std::vector<char> blob;
+    if (!ReadBlob(in, &blob)) {
+        global_logger->error("GardenIndex: truncated full graph blob in {}, skipping load", file_path);
+        return;
+    }
+    if (!blob.empty()) full_index_->Deserialize(blob.data(), blob.size());
+
+    // 原始向量表
+    uint64_t vec_count = 0;
+    ReadPod<uint64_t>(in, &vec_count);
     id_to_vector_.clear();
-    for (size_t i = 0; i < vec_count; ++i) {
-        int64_t id;
-        meta >> id;
-        std::vector<float> vec(dim_);
-        for (int d = 0; d < dim_; ++d) meta >> vec[d];
+    for (uint64_t i = 0; i < vec_count; ++i) {
+        int64_t id = 0;
+        ReadPod<int64_t>(in, &id);
+        std::vector<float> vec(dim_ > 0 ? dim_ : 0);
+        if (dim_ > 0) {
+            in.read(reinterpret_cast<char*>(vec.data()),
+                    static_cast<std::streamsize>(dim_) * static_cast<std::streamsize>(sizeof(float)));
+        }
         id_to_vector_[id] = std::move(vec);
     }
-    // 反向映射（带 REVMAP 哨兵，兼容旧版无反向映射的 meta 文件）
-    std::string marker;
-    if (meta >> marker && marker == "REVMAP") {
-        id_to_discrete_.clear();
-        size_t disc_cnt;
-        meta >> disc_cnt;
-        for (size_t i = 0; i < disc_cnt; ++i) {
-            int64_t id;
-            size_t fmap_size;
-            meta >> id >> fmap_size;
-            for (size_t j = 0; j < fmap_size; ++j) {
-                std::string field, value;
-                meta >> field >> value;
-                id_to_discrete_[id][field] = value;
-            }
-        }
-        id_to_continuous_bucket_.clear();
-        size_t cont_cnt;
-        meta >> cont_cnt;
-        for (size_t i = 0; i < cont_cnt; ++i) {
-            int64_t id;
-            size_t fmap_size;
-            meta >> id >> fmap_size;
-            for (size_t j = 0; j < fmap_size; ++j) {
-                std::string field;
-                int bidx;
-                meta >> field >> bidx;
-                id_to_continuous_bucket_[id][field] = bidx;
-            }
-        }
-    }
-    // 字段配置（FIELDS 哨兵，重建子图结构；兼容无此段的旧 meta 文件）
-    std::vector<std::string> loaded_disc_fields;
-    std::vector<std::tuple<std::string, int64_t, int64_t, int>> loaded_cont_fields;
-    if (meta >> marker && marker == "FIELDS") {
-        size_t disc_field_cnt;
-        meta >> disc_field_cnt;
-        for (size_t i = 0; i < disc_field_cnt; ++i) {
-            std::string field;
-            meta >> field;
-            loaded_disc_fields.push_back(field);
-        }
-        size_t cont_field_cnt;
-        meta >> cont_field_cnt;
-        for (size_t i = 0; i < cont_field_cnt; ++i) {
-            std::string field;
-            int64_t fmin, fmax;
-            int bsize;
-            meta >> field >> fmin >> fmax >> bsize;
-            loaded_cont_fields.emplace_back(field, fmin, fmax, bsize);
-        }
-    }
-    meta.close();
 
-    // 重建子图结构（此前 Load 依赖外部 Register，现自洽）
-    for (const auto& field : loaded_disc_fields) {
+    // 反向映射：id -> (field -> value)
+    uint64_t disc_map_cnt = 0;
+    ReadPod<uint64_t>(in, &disc_map_cnt);
+    id_to_discrete_.clear();
+    for (uint64_t i = 0; i < disc_map_cnt; ++i) {
+        int64_t id = 0;
+        uint32_t n = 0;
+        ReadPod<int64_t>(in, &id);
+        ReadPod<uint32_t>(in, &n);
+        for (uint32_t j = 0; j < n; ++j) {
+            std::string field, value;
+            if (!ReadStr(in, &field) || !ReadStr(in, &value)) break;
+            id_to_discrete_[id][field] = value;
+        }
+    }
+
+    // 反向映射：id -> (field -> bucket_idx)
+    uint64_t cont_map_cnt = 0;
+    ReadPod<uint64_t>(in, &cont_map_cnt);
+    id_to_continuous_bucket_.clear();
+    for (uint64_t i = 0; i < cont_map_cnt; ++i) {
+        int64_t id = 0;
+        uint32_t n = 0;
+        ReadPod<int64_t>(in, &id);
+        ReadPod<uint32_t>(in, &n);
+        for (uint32_t j = 0; j < n; ++j) {
+            std::string field;
+            int32_t bidx = 0;
+            if (!ReadStr(in, &field) || !ReadPod<int32_t>(in, &bidx)) break;
+            id_to_continuous_bucket_[id][field] = bidx;
+        }
+    }
+
+    // 离散字段集合（先清空，避免残留上一个状态的子图）
+    uint32_t num_disc_fields = 0;
+    ReadPod<uint32_t>(in, &num_disc_fields);
+    discrete_fields_.clear();
+    discrete_subgraphs_.clear();
+    discrete_counts_.clear();
+    for (uint32_t i = 0; i < num_disc_fields; ++i) {
+        std::string field;
+        if (!ReadStr(in, &field)) break;
+        RegisterDiscreteField(field);
+    }
+
+    // 连续字段配置：Register 会一次性把所有分桶建好
+    uint32_t num_cont_fields = 0;
+    ReadPod<uint32_t>(in, &num_cont_fields);
+    continuous_fields_.clear();
+    for (uint32_t i = 0; i < num_cont_fields; ++i) {
+        std::string field;
+        int64_t fmin = 0, fmax = 0, bsize = 0;
+        uint64_t nbuckets = 0;
+        if (!ReadStr(in, &field)) break;
+        ReadPod<int64_t>(in, &fmin);
+        ReadPod<int64_t>(in, &fmax);
+        ReadPod<int64_t>(in, &bsize);
+        ReadPod<uint64_t>(in, &nbuckets);
+        RegisterContinuousField(field, fmin, fmax, static_cast<int>(bsize));
+    }
+
+    // 离散子图
+    uint64_t num_disc_sub = 0;
+    ReadPod<uint64_t>(in, &num_disc_sub);
+    for (uint64_t i = 0; i < num_disc_sub; ++i) {
+        std::string field, value;
+        uint64_t cnt = 0;
+        if (!ReadStr(in, &field) || !ReadStr(in, &value)) break;
+        ReadPod<uint64_t>(in, &cnt);
+        if (!ReadBlob(in, &blob)) break;
         if (!HasDiscreteSubgraph(field)) RegisterDiscreteField(field);
-    }
-    for (const auto& [field, fmin, fmax, bsize] : loaded_cont_fields) {
-        if (!HasContinuousSubgraph(field)) RegisterContinuousField(field, fmin, fmax, bsize);
-    }
-    // 从反向映射反推离散子图的 value 集合，建空子图实例 + 恢复 discrete_counts_
-    for (const auto& [id, fmap] : id_to_discrete_) {
-        for (const auto& [field, value] : fmap) {
-            if (discrete_subgraphs_.count(field)) {
-                GetOrCreateDiscreteSubgraph(field, value);  // 建空子图（若不存在）
-                discrete_counts_[field][value]++;           // 恢复 count
-            }
+        auto* sub = GetOrCreateDiscreteSubgraph(field, value);
+        if (sub != nullptr && !blob.empty()) {
+            sub->Deserialize(blob.data(), blob.size());
         }
+        discrete_counts_[field][value] = cnt;
     }
-    // 恢复连续桶 count（桶结构已由 RegisterContinuousField 建好）
-    for (const auto& [id, fmap] : id_to_continuous_bucket_) {
-        for (const auto& [field, bidx] : fmap) {
-            auto it = continuous_fields_.find(field);
-            if (it != continuous_fields_.end() && bidx >= 0 &&
-                static_cast<size_t>(bidx) < it->second.buckets.size()) {
-                it->second.buckets[bidx].count++;
-            }
+
+    // 连续分桶子图
+    uint64_t num_bucket_sub = 0;
+    ReadPod<uint64_t>(in, &num_bucket_sub);
+    for (uint64_t i = 0; i < num_bucket_sub; ++i) {
+        std::string field;
+        uint64_t bidx = 0, cnt = 0;
+        if (!ReadStr(in, &field)) break;
+        ReadPod<uint64_t>(in, &bidx);
+        ReadPod<uint64_t>(in, &cnt);
+        if (!ReadBlob(in, &blob)) break;
+        auto it = continuous_fields_.find(field);
+        if (it == continuous_fields_.end() || bidx >= it->second.buckets.size()) continue;
+        auto& bucket = it->second.buckets[bidx];
+        bucket.count = cnt;
+        if (bucket.index && !blob.empty()) {
+            bucket.index->Deserialize(blob.data(), blob.size());
         }
     }
 
-    // 子图数据从各自的 .index 文件加载（结构已重建，value_map/桶已就位）
-    for (auto& [field, value_map] : discrete_subgraphs_) {
-        for (auto& [value, index] : value_map) {
-            if (index) {
-                index->LoadIndex(path + "_disc_" + field + "_" + value + ".index");
-            }
-        }
-    }
-    for (auto& [field, config] : continuous_fields_) {
-        for (size_t i = 0; i < config.buckets.size(); ++i) {
-            if (config.buckets[i].index) {
-                config.buckets[i].index->LoadIndex(
-                    path + "_cont_" + field + "_" + std::to_string(i) + ".index");
-            }
-        }
-    }
-    global_logger->info("GardenIndex: loaded from {}", path);
+    global_logger->info("GardenIndex: loaded from {}", file_path);
 }
 
 }  // namespace vectordb

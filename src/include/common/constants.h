@@ -37,6 +37,13 @@ namespace vectordb {
 #define OPERATION_TYPE_BATCH_UPSERT "batch_upsert" // 批量插入操作类型
 #define REQUEST_ITEMS "items" // 批量操作的数据项数组
 
+// 元数据变更操作类型。这类变更必须经 Raft 复制到所有副本：
+// 复制状态机要求各节点"初始状态相同 + 操作序列相同"，
+// 若建集合 / 注册 GARDEN 字段只在本地生效，各副本的状态机初始条件就不同，
+// 重放同一串 upsert 会得到不同的索引结构。
+#define OPERATION_TYPE_CREATE_COLLECTION "create_collection"
+#define OPERATION_TYPE_REGISTER_GARDEN_FIELD "register_garden_field"
+
 #define REQUEST_COLLECTION_NAME "collectionName" // Collection 名称字段
 #define DEFAULT_COLLECTION_NAME "default" // 默认 Collection 名称
 #define REQUEST_EXCLUDE_IDS "excludeIds"   // 搜索黑名单 ID 数组（Selector 角色）

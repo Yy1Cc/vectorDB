@@ -109,28 +109,55 @@ auto InmemLogStore::append(nuraft::ptr<nuraft::log_entry> &entry) -> nuraft::ulo
 void InmemLogStore::write_at(ulong index, nuraft::ptr<nuraft::log_entry> &entry) {
   nuraft::ptr<nuraft::log_entry> clone = MakeClone(entry);
 
-  // Discard all logs equal to or greater than `index.
-  std::lock_guard<std::mutex> l(logs_lock_);
-  auto itr = logs_.lower_bound(index);
-  while (itr != logs_.end()) {
-    itr = logs_.erase(itr);
-  }
-  logs_[index] = clone;
-
-  if (disk_emul_delay_ != 0U) {
-    uint64_t cur_time = nuraft::timer_helper::get_timeofday_us();
-    disk_emul_logs_being_written_[cur_time + disk_emul_delay_ * 1000] = index;
-
-    // Remove entries greater than `index`.
-    auto entry = disk_emul_logs_being_written_.begin();
-    while (entry != disk_emul_logs_being_written_.end()) {
-      if (entry->second > index) {
-        entry = disk_emul_logs_being_written_.erase(entry);
-      } else {
-        entry++;
-      }
+  // 先取出新条目的载荷，供后面补写 WAL（必须在锁外做，避免持锁做字符串拷贝）
+  const bool need_wal = (entry->get_val_type() == nuraft::log_val_type::app_log);
+  std::string content;
+  if (need_wal) {
+    nuraft::buffer &data = clone->get_buf();
+    // 载荷前 sizeof(int) 字节是长度前缀。size() 不足时说明条目异常，
+    // 直接放弃补写 WAL，避免 size_t 下溢造成越界读。
+    if (data.size() > sizeof(int)) {
+      content.assign(reinterpret_cast<const char *>(data.data() + data.pos() + sizeof(int)),
+                     data.size() - sizeof(int));
     }
-    disk_emul_ea_.invoke();
+  }
+
+  {
+    // Discard all logs equal to or greater than `index.
+    std::lock_guard<std::mutex> l(logs_lock_);
+    auto itr = logs_.lower_bound(index);
+    while (itr != logs_.end()) {
+      itr = logs_.erase(itr);
+    }
+    logs_[index] = clone;
+
+    if (disk_emul_delay_ != 0U) {
+      uint64_t cur_time = nuraft::timer_helper::get_timeofday_us();
+      disk_emul_logs_being_written_[cur_time + disk_emul_delay_ * 1000] = index;
+
+      // Remove entries greater than `index`.
+      auto e = disk_emul_logs_being_written_.begin();
+      while (e != disk_emul_logs_being_written_.end()) {
+        if (e->second > index) {
+          e = disk_emul_logs_being_written_.erase(e);
+        } else {
+          e++;
+        }
+      }
+      disk_emul_ea_.invoke();
+    }
+  }
+
+  // write_at 表示"从 index 起的日志与 leader 冲突，用新条目覆盖"。
+  // 被丢弃的条目此前已由 append 写进 WAL，若不撤销，重启重放时会把
+  // leader 已经否决的写入重新应用一遍（一致性错误）。
+  // 而 write_at 本身不会写 WAL，因此撤销后还要把替换进来的新条目补写回去。
+  if (vector_database_ == nullptr) return;
+  if (index > 0) {
+    vector_database_->TruncateWalBefore(index - 1);
+  }
+  if (need_wal) {
+    vector_database_->WriteWalLogWithId(index, content);
   }
 }
 
@@ -272,19 +299,30 @@ void InmemLogStore::apply_pack(nuraft::ulong index, nuraft::buffer &pack) {
 }
 
 auto InmemLogStore::compact(ulong last_log_index) -> bool {
-  std::lock_guard<std::mutex> l(logs_lock_);
-  for (ulong ii = start_idx_; ii <= last_log_index; ++ii) {
-    auto entry = logs_.find(ii);
-    if (entry != logs_.end()) {
-      logs_.erase(entry);
+  {
+    std::lock_guard<std::mutex> l(logs_lock_);
+    for (ulong ii = start_idx_; ii <= last_log_index; ++ii) {
+      auto entry = logs_.find(ii);
+      if (entry != logs_.end()) {
+        logs_.erase(entry);
+      }
+    }
+
+    // WARNING:
+    //   Even though nothing has been erased,
+    //   we should set `start_idx_` to new index.
+    //   `next_slot()` 返回 start_idx_ + logs_.size() - 1，
+    //   不推进会让日志 index 整体错位，直接破坏 Raft 正确性。
+    if (start_idx_ <= last_log_index) {
+      start_idx_ = last_log_index + 1;
     }
   }
 
-  // WARNING:
-  //   Even though nothing has been erased,
-  //   we should set `start_idx_` to new index.
-  if (start_idx_ <= last_log_index) {
-    start_idx_ = last_log_index + 1;
+  // 同步清理已被快照覆盖的 WAL 条目，否则磁盘上的 WAL 会无限增长。
+  // 放在 logs_lock_ 之外：文件重写可能耗时较长，持锁会阻塞所有 Raft 日志追加。
+  // 安全性：之后追加的条目 idx 必然 > last_log_index，不会被误删。
+  if (vector_database_ != nullptr) {
+    vector_database_->TruncateWalBefore(last_log_index);
   }
   return true;
 }

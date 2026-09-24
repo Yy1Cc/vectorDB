@@ -35,6 +35,8 @@ void MasterServer::StartNodeUpdateTimer() {
         global_logger->error("master_service_impl_ empty");
       } else {
         master_service_impl_->UpdateNodeStates();
+        // 节点状态与日志进度采集完成后再做再平衡，确保决策基于最新信息
+        master_service_impl_->RunBalancer();
       }
     }
   }).detach();

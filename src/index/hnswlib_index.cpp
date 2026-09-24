@@ -1,6 +1,17 @@
 #include "index/hnswlib_index.h"
+#include <atomic>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <stdexcept>
+#include <string>
 #include <vector>
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 #include "logger/logger.h"
 namespace vectordb {
 
@@ -87,6 +98,80 @@ void HNSWLibIndex::LoadIndex(const std::string& file_path) { // 添加 loadIndex
     } else {
         global_logger->warn("File not found: {}. Skipping loading index.", file_path);
     }
+}
+
+namespace {
+// 进程内单调递增，保证并发调用不会复用同一个临时文件名。
+auto NextTempSerial() -> uint64_t {
+    static std::atomic<uint64_t> serial{0};
+    return serial.fetch_add(1);
+}
+
+auto MakeTempPath() -> std::filesystem::path {
+    const auto base = std::filesystem::temp_directory_path();
+    const auto pid = static_cast<unsigned long long>(
+#ifdef _WIN32
+        _getpid()
+#else
+        getpid()
+#endif
+    );
+    return base / ("vectordb_hnsw_" + std::to_string(pid) + "_" + std::to_string(NextTempSerial()) + ".tmp");
+}
+}  // namespace
+
+auto HNSWLibIndex::Serialize() -> std::vector<char> {
+    if (index_ == nullptr) {
+        return {};
+    }
+    const auto tmp = MakeTempPath();
+    index_->saveIndex(tmp.string());
+
+    std::ifstream in(tmp, std::ios::binary);
+    if (!in.is_open()) {
+        std::filesystem::remove(tmp);
+        throw std::runtime_error("HNSWLibIndex::Serialize: cannot reopen temp file " + tmp.string());
+    }
+    std::vector<char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    std::filesystem::remove(tmp);
+    return bytes;
+}
+
+void HNSWLibIndex::Deserialize(const char* data, size_t size) {
+    if (index_ == nullptr) {
+        return;
+    }
+    const auto tmp = MakeTempPath();
+    {
+        std::ofstream out(tmp, std::ios::binary);
+        if (!out.is_open()) {
+            throw std::runtime_error("HNSWLibIndex::Deserialize: cannot create temp file " + tmp.string());
+        }
+        if (size > 0) {
+            out.write(data, static_cast<std::streamsize>(size));
+        }
+        out.flush();
+    }
+    bool ok = false;
+    std::string err;
+    try {
+        index_->loadIndex(tmp.string(), space_, max_elements_);
+        ok = true;
+    } catch (const std::exception& e) {
+        err = e.what();
+    }
+    std::filesystem::remove(tmp);
+    if (!ok) {
+        throw std::runtime_error("HNSWLibIndex::Deserialize: loadIndex failed: " + err);
+    }
+}
+
+auto HNSWLibIndex::GetTotalCount() const -> int64_t {
+    if (index_ == nullptr) {
+        return 0;
+    }
+    return static_cast<int64_t>(index_->getCurrentElementCount());
 }
 
 }  // namespace vectordb

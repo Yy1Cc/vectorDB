@@ -25,6 +25,11 @@ class AdminServiceImpl : public nvm::AdminService, public BaseServiceImpl {
                  ::nvm::HttpResponse * /*response*/, ::google::protobuf::Closure *done) override;
   void AddFollower(::google::protobuf::RpcController *controller, const ::nvm::HttpRequest * /*request*/,
                    ::nvm::HttpResponse * /*response*/, ::google::protobuf::Closure *done) override;
+  void RemoveFollower(::google::protobuf::RpcController *controller, const ::nvm::HttpRequest * /*request*/,
+                      ::nvm::HttpResponse * /*response*/, ::google::protobuf::Closure *done) override;
+  // 将已追平的 learner 提升为正式成员。追赶未完成时会返回错误。
+  void PromoteLearner(::google::protobuf::RpcController *controller, const ::nvm::HttpRequest * /*request*/,
+                      ::nvm::HttpResponse * /*response*/, ::google::protobuf::Closure *done) override;
   void ListNode(::google::protobuf::RpcController *controller, const ::nvm::HttpRequest * /*request*/,
                 ::nvm::HttpResponse * /*response*/, ::google::protobuf::Closure *done) override;
   void GetNode(::google::protobuf::RpcController *controller, const ::nvm::HttpRequest * /*request*/,

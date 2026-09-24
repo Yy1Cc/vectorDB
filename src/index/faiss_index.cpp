@@ -101,4 +101,11 @@ void FaissIndex::Train(int n, const std::vector<float>& data) { // 训练量化�
     index_->train(n, data.data());
 }
 
+auto FaissIndex::GetTotalCount() const -> int64_t {
+    if (index_ == nullptr) {
+        return 0;
+    }
+    return index_->ntotal;
+}
+
 }  // namespace vectordb

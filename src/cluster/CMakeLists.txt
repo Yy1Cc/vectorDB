@@ -6,6 +6,7 @@ add_library(
         raft_logger.cpp
         raft_stuff.cpp
         etcd_http_client.cpp
+        balancer.cpp
         )
 
 set(ALL_OBJECT_FILES

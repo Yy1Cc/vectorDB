@@ -21,12 +21,22 @@ Persistence::~Persistence() {
 }
 
 void Persistence::Init(const std::string &local_path) {
+  // 确保 WAL 与快照目录都存在。目录缺失会让快照写入静默失败
+  // （ofstream 打开失败只打日志），是难以排查的隐性故障。
+  std::error_code ec;
+  std::filesystem::create_directories(std::filesystem::path(local_path).parent_path(), ec);
+  const std::string& snap_path = Cfg::Instance().SnapPath();
+  if (!snap_path.empty()) {
+    std::filesystem::create_directories(snap_path, ec);
+  }
+
   if (!std::filesystem::exists(local_path)) {
     // 文件不存在，先创建文件
     std::ofstream temp_file(local_path);
     temp_file.close();
   }
 
+  wal_path_ = local_path;
   wal_log_file_.open(local_path, std::ios::in | std::ios::out |
                                      std::ios::app);  // 以 std::ios::in | std::ios::out | std::ios::app 模式打开文件
   if (!wal_log_file_.is_open()) {
@@ -85,7 +95,8 @@ void Persistence::WriteWalRawLog(uint64_t log_id, const std::string &operation_t
   std::string compressed_data;
   snappy::Compress(oss.str().c_str(), oss.str().size(), &compressed_data);
 
-  // 写入压缩后的日志条目到文件
+  // 写入压缩后的日志条目到文件（与 TruncateWalBefore 互斥，后者会关闭并重建文件）
+  std::lock_guard<std::mutex> l(wal_mutex_);
   wal_log_file_ << compressed_data << std::endl;
 
   if (wal_log_file_.fail()) {  // 检查是否发生错误
@@ -142,9 +153,13 @@ void Persistence::ReadNextWalLog(std::string *operation_type, rapidjson::Documen
 }
 
 void Persistence::TakeSnapshot() {
-  global_logger->debug("Taking snapshot");
+  TakeSnapshot(increase_id_);
+}
 
-  last_snapshot_id_ = increase_id_;
+void Persistence::TakeSnapshot(uint64_t snapshot_log_id) {
+  global_logger->debug("Taking snapshot at log id {}", snapshot_log_id);
+
+  last_snapshot_id_ = snapshot_log_id;
   std::string snapshot_folder_path = Cfg::Instance().SnapPath();
   // 遍历所有 Collection，保存各自的索引
   auto names = CollectionManager::Instance().ListCollections();
@@ -172,29 +187,104 @@ void Persistence::LoadSnapshot() {
   }
 }
 
-void Persistence::SaveLastSnapshotId(const std::string &folder_path) {  // 添加 saveLastSnapshotID 方法实现
-  std::string file_path = folder_path + "MaxLogID";
-  std::ofstream file("file_path");
-  if (file.is_open()) {
-    file << last_snapshot_id_;
-    file.close();
-  } else {
-    global_logger->error("Failed to open file snapshots_MaxID for writing");
+// 快照位点文件名。保存端与加载端必须使用同一个名字 —— 此前两端分别是
+// "MaxLogID" 和 ".MaxLogID"，且都把字符串字面量 "file_path" 当成了文件名，
+// 导致 last_snapshot_id_ 永远读不回来（恒为 0），重启时 WAL 被全量重放，
+// 快照相当于白做。
+namespace {
+constexpr const char* kSnapshotIdFileName = "MaxLogID";
+}  // namespace
+
+void Persistence::SaveLastSnapshotId(const std::string &folder_path) {
+  const std::string file_path = folder_path + kSnapshotIdFileName;
+  std::ofstream file(file_path);
+  if (!file.is_open()) {
+    global_logger->error("Failed to open snapshot MaxLogID file for writing: {}", file_path);
+    return;
   }
-  global_logger->debug("save snapshot Max log ID {}", last_snapshot_id_);  // 添加调试信息
+  file << last_snapshot_id_;
+  file.close();
+  global_logger->debug("save snapshot Max log ID {} to {}", last_snapshot_id_, file_path);
 }
 
-void Persistence::LoadLastSnapshotId(const std::string &folder_path) {  // 添加 loadLastSnapshotID 方法实现
-  std::string file_path = folder_path + ".MaxLogID";
-  std::ifstream file("file_path");
-  if (file.is_open()) {
-    file >> last_snapshot_id_;
-    file.close();
-  } else {
-    global_logger->warn("Failed to open file snapshots_MaxID for reading");
+void Persistence::LoadLastSnapshotId(const std::string &folder_path) {
+  const std::string file_path = folder_path + kSnapshotIdFileName;
+  std::ifstream file(file_path);
+  if (!file.is_open()) {
+    // 首次启动或尚未做过快照：从 0 开始，重放全部 WAL。
+    global_logger->info("Snapshot MaxLogID file not found ({}), replaying full WAL", file_path);
+    last_snapshot_id_ = 0;
+    return;
+  }
+  file >> last_snapshot_id_;
+  file.close();
+  global_logger->debug("Loading snapshot Max log ID {} from {}", last_snapshot_id_, file_path);
+}
+
+auto Persistence::ParseWalLogId(const std::string& compressed_line, uint64_t* out_id) -> bool {
+  std::string raw;
+  if (!snappy::Uncompress(compressed_line.data(), compressed_line.size(), &raw)) {
+    return false;
+  }
+  const auto pos = raw.find('|');
+  if (pos == std::string::npos || pos == 0) {
+    return false;
+  }
+  try {
+    *out_id = std::stoull(raw.substr(0, pos));
+  } catch (const std::exception&) {
+    return false;
+  }
+  return true;
+}
+
+void Persistence::TruncateWalBefore(uint64_t last_log_id) {
+  std::lock_guard<std::mutex> l(wal_mutex_);
+  if (wal_path_.empty() || !wal_log_file_.is_open()) {
+    return;
+  }
+  wal_log_file_.flush();
+  wal_log_file_.close();
+
+  // 读出全部条目，只保留 log_id > last_log_id 的部分。
+  // 无法解析的条目一律保守保留，避免因格式问题误删数据。
+  std::vector<std::string> keep;
+  {
+    std::ifstream in(wal_path_, std::ios::binary);
+    if (!in.is_open()) {
+      global_logger->error("TruncateWalBefore: cannot reopen WAL for reading: {}", wal_path_);
+      return;
+    }
+    std::string line;
+    while (std::getline(in, line)) {
+      if (line.empty()) continue;
+      uint64_t id = 0;
+      if (!ParseWalLogId(line, &id) || id > last_log_id) {
+        keep.push_back(line);
+      }
+    }
   }
 
-  global_logger->debug("Loading snapshot Max log ID {}", last_snapshot_id_);  // 添加调试信息
+  {
+    std::ofstream out(wal_path_, std::ios::binary | std::ios::trunc);
+    if (!out.is_open()) {
+      global_logger->error("TruncateWalBefore: cannot reopen WAL for writing: {}", wal_path_);
+      return;
+    }
+    for (const auto& entry : keep) {
+      out << entry << "\n";
+    }
+    out.flush();
+  }
+
+  // 恢复 append 模式，否则后续写入会全部失败（且是静默失败）
+  wal_log_file_.open(wal_path_, std::ios::in | std::ios::out | std::ios::app);
+  if (!wal_log_file_.is_open()) {
+    global_logger->error("TruncateWalBefore: failed to reopen WAL in append mode: {}", wal_path_);
+    return;
+  }
+
+  global_logger->info("Truncated WAL before log id {}: kept {} entries", last_log_id, keep.size());
 }
 
 }  // namespace vectordb

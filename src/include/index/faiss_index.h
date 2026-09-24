@@ -29,6 +29,9 @@ public:
     void Train(int n, const std::vector<float>& data); // 训练量化索引（SQ8/SQ4 需要）
     void SaveIndex(const std::string& file_path); // 添加 saveIndex 方法声明
     void LoadIndex(const std::string& file_path); // 将返回类型更改为 faiss::Index*
+
+    // 索引中当前的向量条数（faiss 的 ntotal）。用于负载上报与再平衡决策。
+    auto GetTotalCount() const -> int64_t;
 private:
     faiss::Index* index_;
     bool normalize_; // ip2cos: 为 true 时插入/查询前做 L2 归一化

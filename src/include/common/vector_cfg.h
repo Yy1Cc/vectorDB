@@ -52,6 +52,24 @@ class Cfg : public Singleton<Cfg> {
   auto Dim() const noexcept -> int { return dim_; }
   auto NumData() const noexcept -> int { return num_data_; }
 
+  // Master 的地址与端口。为空/为 0 表示未启用自动注册（退化为人工调 AddNode）。
+  auto MasterAddress() const noexcept -> const std::string & { return master_address_; }
+  auto MasterPort() const noexcept -> int { return master_port_; }
+  // 本节点所属的实例（集群）ID，注册时上报给 Master
+  auto InstanceId() const noexcept -> int { return instance_id_; }
+
+  // 本节点对外提供 HTTP 服务的地址，Master 据此探测、Proxy 据此转发。
+  // 未显式配置 NODE_URL 时，用 Raft endpoint 的 host 拼上 HTTP 服务端口。
+  auto NodeUrl() const -> std::string {
+    if (!node_url_.empty()) {
+      return node_url_;
+    }
+    const std::string &endpoint = raft_cfg_.endpoint_;
+    auto pos = endpoint.rfind(':');
+    std::string host = (pos == std::string::npos) ? endpoint : endpoint.substr(0, pos);
+    return "http://" + host + ":" + std::to_string(port_);
+  }
+
  private:
   Cfg() { ParseCfgFile(cfg_path,node_id); }
 
@@ -71,6 +89,12 @@ class Cfg : public Singleton<Cfg> {
   int port_;
   int dim_{1};
   int num_data_{100};
+
+  // Master 相关：用于节点启动后自动注册（自动扩容的第一步）
+  std::string master_address_;
+  int master_port_{0};
+  int instance_id_{1};
+  std::string node_url_;  // 可选的显式对外地址，覆盖 NodeUrl() 的自动拼装
 
   static std::string cfg_path;
   static int node_id;

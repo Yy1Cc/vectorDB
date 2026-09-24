@@ -60,6 +60,10 @@
     "TEST_WAL_PATH" : "/root/test_vectordb/wal/wal.log",
     "TEST_SNAP_PATH" : "/root/test_vectordb/snap/",
     "DIM": 128,
-    "NUM_DATA": 1000000
+    "NUM_DATA": 1000000,
+
+    "MASTER_ADDRESS" : "127.0.0.1",
+    "MASTER_PORT" : 6060,
+    "INSTANCE_ID" : 1
 
 }

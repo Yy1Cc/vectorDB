@@ -201,6 +201,29 @@ void Cfg::ParseCfgFile(const std::string &path,const  int &node_id) {
   } else {
     std::cout << "NUM_DATA fault, using default 100" << std::endl;
   }
+
+  // Master 相关配置：缺失表示不启用自动注册，不影响既有部署方式
+  if (data.HasMember("MASTER_ADDRESS") && data["MASTER_ADDRESS"].IsString()) {
+    master_address_ = data["MASTER_ADDRESS"].GetString();
+  } else {
+    std::cout << "MASTER_ADDRESS not configured, auto registration disabled" << std::endl;
+  }
+
+  if (data.HasMember("MASTER_PORT") && data["MASTER_PORT"].IsInt()) {
+    master_port_ = data["MASTER_PORT"].GetInt();
+  } else {
+    std::cout << "MASTER_PORT not configured, auto registration disabled" << std::endl;
+  }
+
+  if (data.HasMember("INSTANCE_ID") && data["INSTANCE_ID"].IsInt()) {
+    instance_id_ = data["INSTANCE_ID"].GetInt();
+  } else {
+    std::cout << "INSTANCE_ID not configured, using default 1" << std::endl;
+  }
+
+  if (data.HasMember("NODE_URL") && data["NODE_URL"].IsString()) {
+    node_url_ = data["NODE_URL"].GetString();
+  }
 }
 
 }  // namespace vectordb
